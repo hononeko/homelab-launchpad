@@ -250,40 +250,44 @@ function parseIngresses(
   return routes;
 }
 
-async function fetchHttpRoutes(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
+async function fetchWithFallback<T>(
+  primary: () => Promise<T>,
+  fallbackPath: string,
+  resourceName: string
+): Promise<any[]> {
   try {
-    const res = (await client.customObjectsApi.listClusterCustomObject({
-      group: 'gateway.networking.k8s.io',
-      version: 'v1',
-      plural: 'httproutes',
-    })) as { items: any[] };
+    const res = (await primary()) as { items?: any[] };
     return Array.isArray(res?.items) ? res.items : [];
   } catch {
     try {
-      const fallbackRes = await k8sRequest<{ items: any[] }>('/apis/gateway.networking.k8s.io/v1/httproutes');
+      const fallbackRes = await k8sRequest<{ items?: any[] }>(fallbackPath);
       return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
     } catch (err: any) {
       const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
-      console.warn('[Route Discovery] Failed to list Gateway API HTTPRoutes: %s', safeErr);
+      console.warn(`[Route Discovery] Failed to list ${resourceName}: %s`, safeErr);
       return [];
     }
   }
 }
 
+async function fetchHttpRoutes(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
+  return fetchWithFallback(
+    () => client.customObjectsApi.listClusterCustomObject({
+      group: 'gateway.networking.k8s.io',
+      version: 'v1',
+      plural: 'httproutes',
+    }),
+    '/apis/gateway.networking.k8s.io/v1/httproutes',
+    'Gateway API HTTPRoutes'
+  );
+}
+
 async function fetchIngresses(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
-  try {
-    const res = await client.networkingV1Api.listIngressForAllNamespaces();
-    return Array.isArray(res?.items) ? res.items : [];
-  } catch {
-    try {
-      const fallbackRes = await k8sRequest<{ items: any[] }>('/apis/networking.k8s.io/v1/ingresses');
-      return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
-    } catch (err: any) {
-      const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
-      console.warn('[Route Discovery] Failed to list Ingresses: %s', safeErr);
-      return [];
-    }
-  }
+  return fetchWithFallback(
+    () => client.networkingV1Api.listIngressForAllNamespaces(),
+    '/apis/networking.k8s.io/v1/ingresses',
+    'Ingresses'
+  );
 }
 
 // Discover HTTPRoutes and Ingresses from Kubernetes cluster

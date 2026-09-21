@@ -236,41 +236,31 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
   }
 });
 
-// 9. Real-Time Cluster Telemetry Endpoint
-apiRouter.get('/telemetry', async (req: Request, res: Response) => {
+async function handleTelemetry(res: Response, force: boolean) {
   try {
-    const data = await fetchClusterTelemetry();
-    res.json({
-      success: true,
-      ...data,
-    });
+    const data = await fetchClusterTelemetry(force);
+    if (force) {
+      broadcastTelemetry(data);
+    }
+    res.json({ success: true, ...data });
   } catch (error: any) {
     const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
-    console.error('[API] /api/telemetry error: %s', safeErr);
+    console.error('[API] /telemetry%s error: %s', force ? '/refresh' : '', safeErr);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch cluster telemetry',
+      error: `Failed to ${force ? 'refresh' : 'fetch'} cluster telemetry`,
     });
   }
+}
+
+// 9. Real-Time Cluster Telemetry Endpoint
+apiRouter.get('/telemetry', (_req: Request, res: Response) => {
+  void handleTelemetry(res, false);
 });
 
 // 10. Force Refresh Telemetry
-apiRouter.post('/telemetry/refresh', async (req: Request, res: Response) => {
-  try {
-    const data = await fetchClusterTelemetry(true);
-    broadcastTelemetry(data);
-    res.json({
-      success: true,
-      ...data,
-    });
-  } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
-    console.error('[API] /api/telemetry/refresh error: %s', safeErr);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to refresh cluster telemetry',
-    });
-  }
+apiRouter.post('/telemetry/refresh', (_req: Request, res: Response) => {
+  void handleTelemetry(res, true);
 });
 
 // 11. Server-Sent Events (SSE) Stream
