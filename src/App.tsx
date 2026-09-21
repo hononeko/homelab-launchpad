@@ -29,15 +29,20 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 export default function App() {
   // Persistence state
   const [services, setServices] = useState<ServiceItem[]>(() => {
-    const saved = localStorage.getItem('kerrlab_services');
+    try {
+      localStorage.removeItem('kerrlab_services');
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+
+    const saved = localStorage.getItem('launchpad_services');
     if (!saved) return INITIAL_SERVICES;
     try {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.some((s) => s.id === 'hass' && s.launchesPerWeek === 142)) {
-        localStorage.removeItem('kerrlab_services');
-        return INITIAL_SERVICES;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((s: ServiceItem) => s.id?.startsWith('imported-') || s.custom);
       }
-      return parsed;
+      return INITIAL_SERVICES;
     } catch {
       return INITIAL_SERVICES;
     }
@@ -147,7 +152,7 @@ export default function App() {
 
   // Sync to localStorage
   useEffect(() => {
-    localStorage.setItem('kerrlab_services', JSON.stringify(services));
+    localStorage.setItem('launchpad_services', JSON.stringify(services));
   }, [services]);
 
   useEffect(() => {
@@ -355,6 +360,12 @@ export default function App() {
       setServices(INITIAL_SERVICES);
       setArgoApps(INITIAL_ARGO_APPS);
       setDiscoveredRoutes(INITIAL_DISCOVERED_ROUTES);
+      try {
+        localStorage.removeItem('launchpad_services');
+        localStorage.removeItem('kerrlab_services');
+      } catch {
+        // Ignore storage errors
+      }
       showToast('Services reset to default configuration');
     }
   };
