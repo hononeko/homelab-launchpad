@@ -95,7 +95,7 @@ if (isProd) {
   const distPath = process.env.DIST_PATH || path.resolve(process.cwd(), 'dist');
   console.log(`[Server] Production mode: serving static files from ${distPath}`);
   app.use(express.static(distPath));
-  app.get('*', limiter, (req, res) => {
+  app.get('{/*splat}', limiter, (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }

@@ -12,7 +12,9 @@
     "build": "bun run build:client && bun run build:server",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:smoke": "bun scripts/smoke-test.ts",
+    "test": "bun run lint && bun run test:smoke"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

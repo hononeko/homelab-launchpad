@@ -37,6 +37,9 @@ jobs:
       - name: Build frontend and server assets
         run: bun run build
 
+      - name: Production server startup & smoke test
+        run: bun run test:smoke
+
   docker-build-check:
     name: Multi-Arch Docker Build Check
     needs: lint-and-build
