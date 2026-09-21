@@ -7,7 +7,8 @@ import { spawn } from 'child_process';
 const PORT = process.env.TEST_PORT || '3099';
 console.log(`[Smoke Test] Starting production server on port ${PORT}...`);
 
-const proc = spawn('bun', ['dist-server/index.js'], {
+const bunPath = process.execPath;
+const proc = spawn(bunPath, ['dist-server/index.js'], {
   env: {
     ...process.env,
     PORT,
