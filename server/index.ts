@@ -4,10 +4,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import { apiRouter } from './routes/api';
+import { apiRouter, broadcastTelemetry } from './routes/api';
 import { getK8sClient } from './k8s/client';
 import { scanClusterRoutes } from './k8s/discovery';
 import { fetchArgoApplications } from './k8s/argo';
+import { fetchClusterTelemetry } from './k8s/telemetry';
 
 dotenv.config();
 
@@ -114,7 +115,7 @@ app.listen(PORT, '0.0.0.0', async () => {
       const routes = await scanClusterRoutes();
       console.log(`[Server] Successfully discovered ${routes.length} HTTPRoutes in cluster.`);
     } catch (err) {
-      console.warn('[Server] Initial cluster scan failed:', err);
+      console.warn('[Server] Initial cluster scan failed: %s', (err as Error)?.message || err);
     }
 
     console.log(`[Server] Initializing ArgoCD applications scan...`);
@@ -122,8 +123,26 @@ app.listen(PORT, '0.0.0.0', async () => {
       const apps = await fetchArgoApplications();
       console.log(`[Server] Successfully discovered ${apps.length} ArgoCD applications in cluster.`);
     } catch (err) {
-      console.warn('[Server] Initial ArgoCD applications scan failed:', err);
+      console.warn('[Server] Initial ArgoCD applications scan failed: %s', (err as Error)?.message || err);
     }
+
+    console.log(`[Server] Initializing cluster telemetry scan...`);
+    try {
+      const { telemetry, nodes } = await fetchClusterTelemetry();
+      console.log(`[Server] Telemetry initialized: ${nodes.length} nodes, ${telemetry.podsActive}/${telemetry.podsTotal} pods.`);
+    } catch (err) {
+      console.warn('[Server] Initial cluster telemetry scan failed: %s', (err as Error)?.message || err);
+    }
+
+    // Periodic telemetry update broadcast every 5s
+    setInterval(async () => {
+      try {
+        const data = await fetchClusterTelemetry(true);
+        broadcastTelemetry(data);
+      } catch {
+        // Silently skip transient telemetry refresh errors in background loop
+      }
+    }, 5000);
   } else {
     console.log('[Server] Kubernetes cluster not connected, operating in simulation mode.');
   }

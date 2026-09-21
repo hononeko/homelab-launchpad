@@ -13,6 +13,7 @@ import {
   syncArgoApplication,
   syncAllArgoApplications,
 } from '../k8s/argo';
+import { fetchClusterTelemetry, TelemetryData } from '../k8s/telemetry';
 
 export const apiRouter = Router();
 
@@ -24,6 +25,10 @@ function broadcastSSE(eventType: string, data: any) {
   for (const client of sseClients) {
     client.write(message);
   }
+}
+
+export function broadcastTelemetry(data: TelemetryData) {
+  broadcastSSE('telemetry:updated', data);
 }
 
 // 1. Healthcheck Endpoint
@@ -70,7 +75,7 @@ apiRouter.get('/routes', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes error:', error);
+    console.error('[API] /routes error: %s', (error as Error)?.message || error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to fetch routes',
@@ -98,7 +103,7 @@ apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes/scan error:', error);
+    console.error('[API] /routes/scan error: %s', (error as Error)?.message || error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to scan cluster routes',
@@ -137,7 +142,7 @@ apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/applications error:', error);
+    console.error('[API] /argo/applications error: %s', (error as Error)?.message || error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to fetch ArgoCD applications',
@@ -161,7 +166,7 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/refresh error:', error);
+    console.error('[API] /argo/refresh error: %s', (error as Error)?.message || error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to refresh ArgoCD applications',
@@ -217,7 +222,7 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
       count: result.count,
     });
   } catch (error: any) {
-    console.error('[API] /argo/sync-all error:', error);
+    console.error('[API] /argo/sync-all error: %s', (error as Error)?.message || error);
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to trigger batch sync',
@@ -225,7 +230,42 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
   }
 });
 
-// 9. Server-Sent Events (SSE) Stream
+// 9. Real-Time Cluster Telemetry Endpoint
+apiRouter.get('/telemetry', async (req: Request, res: Response) => {
+  try {
+    const data = await fetchClusterTelemetry();
+    res.json({
+      success: true,
+      ...data,
+    });
+  } catch (error: any) {
+    console.error('[API] /api/telemetry error: %s', (error as Error)?.message || error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to fetch cluster telemetry',
+    });
+  }
+});
+
+// 10. Force Refresh Telemetry
+apiRouter.post('/telemetry/refresh', async (req: Request, res: Response) => {
+  try {
+    const data = await fetchClusterTelemetry(true);
+    broadcastTelemetry(data);
+    res.json({
+      success: true,
+      ...data,
+    });
+  } catch (error: any) {
+    console.error('[API] /api/telemetry/refresh error: %s', (error as Error)?.message || error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to refresh cluster telemetry',
+    });
+  }
+});
+
+// 11. Server-Sent Events (SSE) Stream
 apiRouter.get('/routes/stream', (req: Request, res: Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -244,6 +284,15 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
       argoCount: initialArgo.length,
     })}\n\n`
   );
+
+  // Send current telemetry state immediately on connection
+  fetchClusterTelemetry()
+    .then((data) => {
+      res.write(`event: telemetry:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    })
+    .catch((err) => {
+      console.warn('[SSE] Failed to send initial telemetry: %s', (err as Error)?.message || err);
+    });
 
   sseClients.add(res);
 

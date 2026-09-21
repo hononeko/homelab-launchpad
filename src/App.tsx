@@ -68,6 +68,9 @@ export default function App() {
     return saved !== null ? JSON.parse(saved) : false;
   });
 
+  const [telemetry, setTelemetry] = useState<ClusterTelemetry>(INITIAL_TELEMETRY);
+  const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>(INITIAL_NODES);
+
   // UI state
   const [currentView, setCurrentView] = useState<MainView>('overview');
   const [activeTab, setActiveTab] = useState<TabFilter>('pinned');
@@ -132,7 +135,20 @@ export default function App() {
       })
       .catch((err) => console.warn('[App] Initial argo apps fetch error:', err));
 
-    // 4. Connect to SSE stream for live updates
+    // 4. Fetch cluster telemetry & nodes
+    fetch('/api/telemetry')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && data.telemetry) {
+          setTelemetry(data.telemetry);
+          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+            setClusterNodes(data.nodes);
+          }
+        }
+      })
+      .catch((err) => console.warn('[App] Initial telemetry fetch error:', err));
+
+    // 5. Connect to SSE stream for live updates
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/routes/stream');
@@ -174,6 +190,20 @@ export default function App() {
           }
         } catch (parseErr) {
           console.error('[SSE] Failed to parse argo:syncing event:', parseErr);
+        }
+      });
+
+      eventSource.addEventListener('telemetry:updated', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload?.telemetry) {
+            setTelemetry(payload.telemetry);
+            if (Array.isArray(payload.nodes) && payload.nodes.length > 0) {
+              setClusterNodes(payload.nodes);
+            }
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse telemetry:updated event:', parseErr);
         }
       });
     } catch (sseErr) {
@@ -585,7 +615,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
               {/* 2. Telemetry Strip */}
               <TelemetryStrip
-                telemetry={INITIAL_TELEMETRY}
+                telemetry={telemetry}
                 totalServices={services.length}
                 onOpenSearch={() => setIsSearchOpen(true)}
                 onOpenClusterModal={() => setIsClusterModalOpen(true)}
@@ -999,8 +1029,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
       <ClusterModal
         isOpen={isClusterModalOpen}
         onClose={() => setIsClusterModalOpen(false)}
-        telemetry={INITIAL_TELEMETRY}
-        nodes={INITIAL_NODES}
+        telemetry={telemetry}
+        nodes={clusterNodes}
       />
     </div>
   );
