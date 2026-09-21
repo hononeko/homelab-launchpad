@@ -240,8 +240,26 @@ export default function App() {
     }, 2800);
   };
 
+function getSafeLaunchUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.origin + encodeURI(parsed.pathname) + encodeURI(parsed.search) + encodeURI(parsed.hash);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
   // Launch service action
   const handleLaunchService = (service: ServiceItem) => {
+    const safeUrl = getSafeLaunchUrl(service.url);
+    if (!safeUrl) {
+      showToast(`Invalid launch URL for ${service.name}`);
+      return;
+    }
+
     // Increment launches per week & update lastAccessed
     setServices((prev) =>
       prev.map((s) =>
@@ -257,7 +275,7 @@ export default function App() {
     );
 
     showToast(`Launching ${service.name} (${service.displayUrl})`);
-    window.open(service.url, '_blank', 'noopener,noreferrer');
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
   };
 
   // Toggle service pin
@@ -296,11 +314,14 @@ export default function App() {
 
   const handleImportRoute = async (route: DiscoveredHTTPRoute) => {
     // Add to services list
+    const cleanHost = String(route.host || '').replace(/[^a-zA-Z0-9.:-]/g, '');
+    const cleanUrl = getSafeLaunchUrl(`https://${cleanHost}`) ?? `https://${cleanHost}`;
+
     const newService: ServiceItem = {
       id: `imported-${route.id}`,
       name: route.name,
-      url: `https://${route.host}`,
-      displayUrl: route.host,
+      url: cleanUrl,
+      displayUrl: cleanHost,
       description: `Discovered from k8s ns: ${route.namespace} (${route.backendService})`,
       icon: route.suggestedIcon,
       category: route.suggestedCategory,

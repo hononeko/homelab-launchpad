@@ -171,11 +171,17 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
 
 // 7. Trigger Sync for Single Application
 apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Response) => {
-  const { name } = req.params;
-  try {
-    const result = await syncArgoApplication(name);
+  const rawName = String(req.params.name ?? '');
+  const safeName = rawName.replace(/[\r\n\t]/g, '');
+  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(safeName)) {
+    res.status(400).json({ success: false, error: 'Invalid application name' });
+    return;
+  }
 
-    broadcastSSE('argo:syncing', { name });
+  try {
+    const result = await syncArgoApplication(safeName);
+
+    broadcastSSE('argo:syncing', { name: safeName });
     broadcastSSE('argo:updated', {
       applications: getCachedArgoApps(),
       lastScannedAt: getLastArgoScannedAt(),
@@ -183,14 +189,14 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
 
     res.json({
       success: true,
-      name,
+      name: safeName,
       message: result.message,
     });
   } catch (error: any) {
-    console.error(`[API] /argo/applications/${name}/sync error:`, error);
+    console.error('[API] /argo/applications/sync error for %s:', safeName, error?.message || error);
     res.status(500).json({
       success: false,
-      error: error?.message || `Failed to trigger sync for ${name}`,
+      error: error?.message || `Failed to trigger sync for ${safeName}`,
     });
   }
 });
