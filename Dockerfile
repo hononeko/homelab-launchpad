@@ -1,27 +1,24 @@
 # ==============================================================================
 # Stage 1: Build & Compile Assets
 # ==============================================================================
-FROM node:22-alpine AS builder
+FROM oven/bun:alpine AS builder
 
 WORKDIR /app
 
 # Install dependencies with frozen lockfile
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
 
-# Copy source files
+# Copy application source
 COPY . .
 
-# Build frontend and server
-RUN npm run build:all
-
-# Prune devDependencies to keep production image minimal
-RUN npm prune --omit=dev --ignore-scripts
+# Build frontend production bundle and self-contained server bundle
+RUN bun run build
 
 # ==============================================================================
 # Stage 2: Minimal Production Runtime
 # ==============================================================================
-FROM node:22-alpine AS runner
+FROM oven/bun:alpine AS runner
 
 WORKDIR /app
 
@@ -33,9 +30,8 @@ ENV NODE_ENV=production \
 RUN addgroup -g 10001 -S launchpad && \
     adduser -u 10001 -S launchpad -G launchpad
 
-# Copy production dependencies and compiled artifacts
+# Copy compiled artifacts (server is fully self-contained, no node_modules required)
 COPY --from=builder --chown=launchpad:launchpad /app/package.json ./package.json
-COPY --from=builder --chown=launchpad:launchpad /app/node_modules ./node_modules
 COPY --from=builder --chown=launchpad:launchpad /app/dist ./dist
 COPY --from=builder --chown=launchpad:launchpad /app/dist-server ./dist-server
 
@@ -50,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 USER 10001:10001
 
 # Start production server
-CMD ["node", "dist-server/index.mjs"]
+CMD ["bun", "dist-server/index.js"]

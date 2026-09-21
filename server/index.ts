@@ -13,7 +13,7 @@ dotenv.config();
 
 const app = express();
 const PORT = Number.parseInt(process.env.PORT || '3001', 10);
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.DIST_PATH;
 
 // Disable fingerprinting headers
 app.disable('x-powered-by');

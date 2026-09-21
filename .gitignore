@@ -23,6 +23,7 @@ yarn-error.log*
 .antigravity/
 .vscode/
 .idea/
+.bun/
 .DS_Store
 
 # Test & coverage

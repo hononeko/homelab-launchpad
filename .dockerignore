@@ -8,6 +8,7 @@ dist-server
 .github
 .vscode
 .antigravity
+.bun
 deploy
 docs
 
