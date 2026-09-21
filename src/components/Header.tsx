@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => onViewChange('overview')}
             className="flex items-center gap-2 text-left focus:outline-none group"
-            title="Kerrlab Homelab Launchpad"
+            title="Homelab Launchpad"
           >
             <div className="h-8 w-8 rounded-lg bg-[#0E1117] border border-[#1C212B] p-1 flex items-center justify-center overflow-hidden group-hover:border-[#67df70]/50 transition-colors">
               <img

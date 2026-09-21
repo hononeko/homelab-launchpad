@@ -1,4 +1,4 @@
-# Kerrlab Homelab Launchpad — Architecture & Requirements Specification
+# Homelab Launchpad — Architecture & Requirements Specification
 
 > **Version:** 1.0.0  
 > **Status:** Approved / Active  
@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary & Vision
 
-**Kerrlab Homelab Launchpad** is the centralized mission control and smart startpage for the Kerrlab homelab infrastructure. Designed to replace static bookmark dashboards, the Launchpad acts as an active, Kubernetes-native interface combining:
+**Homelab Launchpad** is the centralized mission control and smart startpage for the homelab infrastructure. Designed to replace static bookmark dashboards, the Launchpad acts as an active, Kubernetes-native interface combining:
 - **Instant Service Navigation & Launchpad:** High-speed, categorized, and pinned access to all self-hosted homelab applications with active usage metrics and latency indicators.
 - **Dynamic Gateway API Auto-Discovery:** Automated detection and synchronization of services exposed via Kubernetes Gateway API `HTTPRoute` and `Ingress` resources across namespaces.
 - **GitOps Continuous Deployment Observability:** Direct integration with the in-cluster ArgoCD API to display real-time sync status (`Synced`, `OutOfSync`, `Syncing`), application health, and on-demand reconciliation.

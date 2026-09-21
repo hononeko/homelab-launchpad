@@ -1,1 +1,1 @@
-{"name":"Kerrlab Homelab Launchpad","description":"Modular homelab startpage and launchpad with auto-discovery for HTTP Routes, ArgoCD GitOps sync status, and real-time cluster telemetry.","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}
+{"name":"Homelab Launchpad","description":"Modular homelab startpage and launchpad with auto-discovery for HTTP Routes, ArgoCD GitOps sync status, and real-time cluster telemetry.","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

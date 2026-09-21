@@ -1,8 +1,8 @@
-# Kerrlab Homelab Launchpad
+# Homelab Launchpad
 
 <div align="center">
 
-![Kerrlab Homelab Launchpad](https://lh3.googleusercontent.com/aida/AEtjO1XrzS6X4beHj6GL_Ab4ZThssdJTHptiBONe-EuVvL3lv3JUs6HrztXn2K9XN_XLaoPeVUgVpCY0hWsuqPs8t9dsn5yYYblv0OZ4PkCORez8sOJtUQahEia8f6SNr7lCD6QH_-IVa6fJ3aVy9gwTaqOQsrj4wUkNaLmIazVsER5lhmC5IBgszagi8omox-Fvt6Xx1UcVDlJLDfdLDiPAwZHj340OOyVR0CIvUqJs-0zxr-Ulx2NCm-2BfpS2)
+![Homelab Launchpad](https://lh3.googleusercontent.com/aida/AEtjO1XrzS6X4beHj6GL_Ab4ZThssdJTHptiBONe-EuVvL3lv3JUs6HrztXn2K9XN_XLaoPeVUgVpCY0hWsuqPs8t9dsn5yYYblv0OZ4PkCORez8sOJtUQahEia8f6SNr7lCD6QH_-IVa6fJ3aVy9gwTaqOQsrj4wUkNaLmIazVsER5lhmC5IBgszagi8omox-Fvt6Xx1UcVDlJLDfdLDiPAwZHj340OOyVR0CIvUqJs-0zxr-Ulx2NCm-2BfpS2)
 
 **Modular Homelab Startpage & Operations Dashboard**  
 *With Kubernetes Gateway API Auto-Discovery, ArgoCD GitOps Sync Monitoring, and Real-Time Cluster Telemetry*
@@ -11,7 +11,7 @@
 [![React](https://img.shields.io/badge/React-19.0-61DAFB.svg?logo=react)](https://react.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4.1-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-646CFF.svg?logo=vite)](https://vitejs.dev/)
-[![Kaneo](https://img.shields.io/badge/Kaneo-Project%20KHL-7F52FF.svg)](https://kaneo.kerrlab.app)
+[![Kaneo](https://img.shields.io/badge/Kaneo-Project%20HLP-7F52FF.svg)](https://kaneo.kerrlab.app)
 
 </div>
 
@@ -19,7 +19,7 @@
 
 ## Overview
 
-**Kerrlab Homelab Launchpad** is the unified central navigation hub for the Kerrlab homelab environment (`kerrlab.app`). It bridges user application launching with live Kubernetes cluster observability, automated route discovery via Gateway API, and GitOps state monitoring through ArgoCD.
+**Homelab Launchpad** is the unified central navigation hub for the homelab environment (`kerrlab.app`). It bridges user application launching with live Kubernetes cluster observability, automated route discovery via Gateway API, and GitOps state monitoring through ArgoCD.
 
 For the full architectural specification, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -95,8 +95,8 @@ For the full architectural specification, see [ARCHITECTURE.md](docs/ARCHITECTUR
 ## Project Management (Kaneo)
 
 Project planning and tasks are tracked in the **Kerrlab Kaneo Workspace**:
-- **Project Name:** `Kerrlab Homelab Launchpad`
-- **Slug:** `KHL`
+- **Project Name:** `Homelab Launchpad`
+- **Slug:** `HLP`
 - **Tasks:**
   - `[#1]` Architecture & requirements specification (Completed)
   - `[#2]` Backend service for Gateway API & Ingress route discovery
