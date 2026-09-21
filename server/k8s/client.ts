@@ -68,7 +68,8 @@ export function getK8sClient(): K8sClientContext {
       console.warn('[K8s Client] No active cluster server found in config, running in simulation mode');
     }
   } catch (err) {
-    console.warn('[K8s Client] Could not load Kubernetes configuration, falling back to simulation mode: %s', (err as Error)?.message || err);
+    const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+    console.warn('[K8s Client] Could not load Kubernetes configuration, falling back to simulation mode: %s', safeErr);
     isConnected = false;
     connectionMode = 'simulation';
   }
@@ -173,7 +174,8 @@ export function k8sRequest<T>(
               reject(new Error(`Failed to parse Kubernetes API JSON response: ${(parseErr as Error).message}`));
             }
           } else {
-            reject(new Error(`Kubernetes API error ${statusCode}: ${body.slice(0, 300)}`));
+            const safePreview = body.slice(0, 300).replace(/[\r\n]/g, ' ');
+            reject(new Error(`Kubernetes API error ${statusCode}: ${safePreview}`));
           }
         });
       }
@@ -185,7 +187,8 @@ export function k8sRequest<T>(
     });
 
     req.on('error', (err) => {
-      reject(err);
+      const safeErrMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      reject(new Error(safeErrMsg));
     });
 
     if (requestBody) {

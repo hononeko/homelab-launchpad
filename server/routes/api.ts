@@ -75,10 +75,11 @@ apiRouter.get('/routes', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /routes error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to fetch routes',
+      error: 'Failed to fetch routes',
     });
   }
 });
@@ -103,10 +104,11 @@ apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes/scan error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /routes/scan error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to scan cluster routes',
+      error: 'Failed to scan cluster routes',
     });
   }
 });
@@ -142,10 +144,11 @@ apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/applications error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /argo/applications error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to fetch ArgoCD applications',
+      error: 'Failed to fetch ArgoCD applications',
     });
   }
 });
@@ -166,10 +169,11 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/refresh error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /argo/refresh error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to refresh ArgoCD applications',
+      error: 'Failed to refresh ArgoCD applications',
     });
   }
 });
@@ -198,10 +202,11 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
       message: result.message,
     });
   } catch (error: any) {
-    console.error('[API] /argo/applications/sync error for %s:', safeName, error?.message || error);
+    const safeErr = String(error?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /argo/applications/sync error for %s: %s', safeName, safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || `Failed to trigger sync for ${safeName}`,
+      error: `Failed to trigger sync for ${safeName}`,
     });
   }
 });
@@ -222,10 +227,11 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
       count: result.count,
     });
   } catch (error: any) {
-    console.error('[API] /argo/sync-all error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /argo/sync-all error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to trigger batch sync',
+      error: 'Failed to trigger batch sync',
     });
   }
 });
@@ -239,10 +245,11 @@ apiRouter.get('/telemetry', async (req: Request, res: Response) => {
       ...data,
     });
   } catch (error: any) {
-    console.error('[API] /api/telemetry error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /api/telemetry error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to fetch cluster telemetry',
+      error: 'Failed to fetch cluster telemetry',
     });
   }
 });
@@ -257,10 +264,11 @@ apiRouter.post('/telemetry/refresh', async (req: Request, res: Response) => {
       ...data,
     });
   } catch (error: any) {
-    console.error('[API] /api/telemetry/refresh error: %s', (error as Error)?.message || error);
+    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    console.error('[API] /api/telemetry/refresh error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to refresh cluster telemetry',
+      error: 'Failed to refresh cluster telemetry',
     });
   }
 });
@@ -291,7 +299,8 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
       res.write(`event: telemetry:updated\ndata: ${JSON.stringify(data)}\n\n`);
     })
     .catch((err) => {
-      console.warn('[SSE] Failed to send initial telemetry: %s', (err as Error)?.message || err);
+      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
     });
 
   sseClients.add(res);

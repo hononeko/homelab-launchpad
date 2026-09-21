@@ -115,7 +115,8 @@ app.listen(PORT, '0.0.0.0', async () => {
       const routes = await scanClusterRoutes();
       console.log(`[Server] Successfully discovered ${routes.length} HTTPRoutes in cluster.`);
     } catch (err) {
-      console.warn('[Server] Initial cluster scan failed: %s', (err as Error)?.message || err);
+      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Server] Initial cluster scan failed: %s', safeErr);
     }
 
     console.log(`[Server] Initializing ArgoCD applications scan...`);
@@ -123,7 +124,8 @@ app.listen(PORT, '0.0.0.0', async () => {
       const apps = await fetchArgoApplications();
       console.log(`[Server] Successfully discovered ${apps.length} ArgoCD applications in cluster.`);
     } catch (err) {
-      console.warn('[Server] Initial ArgoCD applications scan failed: %s', (err as Error)?.message || err);
+      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Server] Initial ArgoCD applications scan failed: %s', safeErr);
     }
 
     console.log(`[Server] Initializing cluster telemetry scan...`);
@@ -131,7 +133,8 @@ app.listen(PORT, '0.0.0.0', async () => {
       const { telemetry, nodes } = await fetchClusterTelemetry();
       console.log(`[Server] Telemetry initialized: ${nodes.length} nodes, ${telemetry.podsActive}/${telemetry.podsTotal} pods.`);
     } catch (err) {
-      console.warn('[Server] Initial cluster telemetry scan failed: %s', (err as Error)?.message || err);
+      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Server] Initial cluster telemetry scan failed: %s', safeErr);
     }
 
     // Periodic telemetry update broadcast every 5s

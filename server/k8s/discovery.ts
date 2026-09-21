@@ -263,7 +263,8 @@ async function fetchHttpRoutes(client: ReturnType<typeof getK8sClient>): Promise
       const fallbackRes = await k8sRequest<{ items: any[] }>('/apis/gateway.networking.k8s.io/v1/httproutes');
       return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
     } catch (err: any) {
-      console.warn('[Route Discovery] Failed to list Gateway API HTTPRoutes: %s', err?.message || err);
+      const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Route Discovery] Failed to list Gateway API HTTPRoutes: %s', safeErr);
       return [];
     }
   }
@@ -278,7 +279,8 @@ async function fetchIngresses(client: ReturnType<typeof getK8sClient>): Promise<
       const fallbackRes = await k8sRequest<{ items: any[] }>('/apis/networking.k8s.io/v1/ingresses');
       return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
     } catch (err: any) {
-      console.warn('[Route Discovery] Failed to list Ingresses: %s', err?.message || err);
+      const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Route Discovery] Failed to list Ingresses: %s', safeErr);
       return [];
     }
   }
@@ -315,7 +317,8 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
     console.log(`[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster.`);
     return cachedRoutes;
   } catch (err: any) {
-    console.error('[Route Discovery] Error scanning cluster routes:', err);
+    const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
+    console.error('[Route Discovery] Error scanning cluster routes: %s', safeErr);
     return cachedRoutes;
   }
 }

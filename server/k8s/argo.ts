@@ -104,7 +104,8 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
           const nsRes = await k8sRequest<{ items?: any[] }>('/apis/argoproj.io/v1alpha1/namespaces/argocd/applications');
           items = Array.isArray(nsRes?.items) ? nsRes.items : [];
         } catch (nsErr: any) {
-          console.warn('[Argo CRD] Failed to fetch Argo applications: %s', nsErr?.message || directErr?.message || 'unknown error');
+          const safeMsg = String(nsErr?.message || directErr?.message || 'unknown error').replace(/[\r\n]/g, ' ');
+          console.warn('[Argo CRD] Failed to fetch Argo applications: %s', safeMsg);
           items = [];
         }
       }
@@ -119,7 +120,8 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
     console.log(`[Argo CRD] Scanned ${cachedArgoApps.length} ArgoCD applications from cluster.`);
     return cachedArgoApps;
   } catch (err: any) {
-    console.error('[Argo CRD] Error fetching Argo applications: %s', err?.message || err);
+    const safeMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
+    console.error('[Argo CRD] Error fetching Argo applications: %s', safeMsg);
     return cachedArgoApps;
   }
 }
@@ -200,11 +202,13 @@ export async function syncArgoApplication(
       message: `Sync operation submitted to ArgoCD controller for ${name}`,
     };
   } catch (err: any) {
-    console.error('[Argo CRD] Failed to sync application %s: %s', name, err?.response?.body?.message || err?.message || err);
+    const safeName = String(name).replace(/[\r\n]/g, '');
+    const safeMsg = String(err?.response?.body?.message || err?.message || err).replace(/[\r\n]/g, ' ');
+    console.error('[Argo CRD] Failed to sync application %s: %s', safeName, safeMsg);
     if (targetApp) {
       targetApp.syncStatus = 'OutOfSync';
     }
-    throw new Error(err?.response?.body?.message || err?.message || `Failed to sync application ${name}`);
+    throw new Error(safeMsg || `Failed to sync application ${safeName}`);
   }
 }
 
@@ -226,7 +230,9 @@ export async function syncAllArgoApplications(): Promise<{
       await syncArgoApplication(app.name);
       triggered.push(app.name);
     } catch (err: any) {
-      console.warn(`[Argo CRD] Batch sync failed for ${app.name}:`, err?.message || err);
+      const safeAppName = String(app.name).replace(/[\r\n]/g, '');
+      const safeMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      console.warn('[Argo CRD] Batch sync failed for %s: %s', safeAppName, safeMsg);
     }
   }
 
