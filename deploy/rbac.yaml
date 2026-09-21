@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: homelab-launchpad
+  namespace: tools
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homelab-launchpad-role
+rules:
+  # Gateway API & Ingress route discovery
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+
+  # ArgoCD GitOps application observation and reconciliation
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homelab-launchpad-binding
+subjects:
+  - kind: ServiceAccount
+    name: homelab-launchpad
+    namespace: tools
+roleRef:
+  kind: ClusterRole
+  name: homelab-launchpad-role
+  apiGroup: rbac.authorization.k8s.io

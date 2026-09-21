@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { apiRouter } from './routes/api';
 import { getK8sClient } from './k8s/client';
 import { scanClusterRoutes } from './k8s/discovery';
+import { fetchArgoApplications } from './k8s/argo';
 
 dotenv.config();
 
@@ -105,7 +106,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Listening on: http://0.0.0.0:${PORT}`);
   console.log(`==================================================\n`);
 
-  // Initialize K8s client and warm up route cache
+  // Initialize K8s client and warm up route & argo cache
   const client = getK8sClient();
   if (client.isConnected) {
     console.log(`[Server] Initializing cluster route scan against ${client.clusterServer}...`);
@@ -114,6 +115,14 @@ app.listen(PORT, '0.0.0.0', async () => {
       console.log(`[Server] Successfully discovered ${routes.length} HTTPRoutes in cluster.`);
     } catch (err) {
       console.warn('[Server] Initial cluster scan failed:', err);
+    }
+
+    console.log(`[Server] Initializing ArgoCD applications scan...`);
+    try {
+      const apps = await fetchArgoApplications();
+      console.log(`[Server] Successfully discovered ${apps.length} ArgoCD applications in cluster.`);
+    } catch (err) {
+      console.warn('[Server] Initial ArgoCD applications scan failed:', err);
     }
   } else {
     console.log('[Server] Kubernetes cluster not connected, operating in simulation mode.');

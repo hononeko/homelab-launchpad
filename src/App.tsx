@@ -77,6 +77,7 @@ export default function App() {
   const [isClusterModalOpen, setIsClusterModalOpen] = useState(false);
   const [isScanningRoutes, setIsScanningRoutes] = useState(false);
   const [isSyncingAllArgo, setIsSyncingAllArgo] = useState(false);
+  const [isRefreshingArgo, setIsRefreshingArgo] = useState(false);
   const [showExtendedServices, setShowExtendedServices] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [k8sStatus, setK8sStatus] = useState<{
@@ -89,7 +90,7 @@ export default function App() {
     mode: 'simulation',
   });
 
-  // Fetch initial routes from backend and subscribe to SSE stream
+  // Fetch initial routes & ArgoCD applications from backend and subscribe to SSE stream
   useEffect(() => {
     // 1. Fetch health & connection status
     fetch('/api/health')
@@ -121,7 +122,17 @@ export default function App() {
       })
       .catch((err) => console.warn('[App] Initial routes fetch error:', err));
 
-    // 3. Connect to SSE stream for live updates
+    // 3. Fetch ArgoCD applications
+    fetch('/api/argo/applications')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && Array.isArray(data.applications) && data.applications.length > 0) {
+          setArgoApps(data.applications);
+        }
+      })
+      .catch((err) => console.warn('[App] Initial argo apps fetch error:', err));
+
+    // 4. Connect to SSE stream for live updates
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/routes/stream');
@@ -139,6 +150,30 @@ export default function App() {
           }
         } catch (parseErr) {
           console.error('[SSE] Failed to parse routes:updated event:', parseErr);
+        }
+      });
+
+      eventSource.addEventListener('argo:updated', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (Array.isArray(payload?.applications)) {
+            setArgoApps(payload.applications);
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse argo:updated event:', parseErr);
+        }
+      });
+
+      eventSource.addEventListener('argo:syncing', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload?.name) {
+            setArgoApps((prev) =>
+              prev.map((a) => (a.name === payload.name ? { ...a, syncStatus: 'Syncing' } : a))
+            );
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse argo:syncing event:', parseErr);
         }
       });
     } catch (sseErr) {
@@ -205,8 +240,26 @@ export default function App() {
     }, 2800);
   };
 
+function getSafeLaunchUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.origin + encodeURI(parsed.pathname) + encodeURI(parsed.search) + encodeURI(parsed.hash);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
   // Launch service action
   const handleLaunchService = (service: ServiceItem) => {
+    const safeUrl = getSafeLaunchUrl(service.url);
+    if (!safeUrl) {
+      showToast(`Invalid launch URL for ${service.name}`);
+      return;
+    }
+
     // Increment launches per week & update lastAccessed
     setServices((prev) =>
       prev.map((s) =>
@@ -222,7 +275,7 @@ export default function App() {
     );
 
     showToast(`Launching ${service.name} (${service.displayUrl})`);
-    window.open(service.url, '_blank', 'noopener,noreferrer');
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
   };
 
   // Toggle service pin
@@ -261,11 +314,14 @@ export default function App() {
 
   const handleImportRoute = async (route: DiscoveredHTTPRoute) => {
     // Add to services list
+    const cleanHost = String(route.host || '').replace(/[^a-zA-Z0-9.:-]/g, '');
+    const cleanUrl = getSafeLaunchUrl(`https://${cleanHost}`) ?? `https://${cleanHost}`;
+
     const newService: ServiceItem = {
       id: `imported-${route.id}`,
       name: route.name,
-      url: `https://${route.host}`,
-      displayUrl: route.host,
+      url: cleanUrl,
+      displayUrl: cleanHost,
       description: `Discovered from k8s ns: ${route.namespace} (${route.backendService})`,
       icon: route.suggestedIcon,
       category: route.suggestedCategory,
@@ -315,44 +371,78 @@ export default function App() {
   };
 
   // ArgoCD Sync actions
-  const handleSyncArgoApp = (appId: string) => {
+  const handleSyncArgoApp = async (appId: string) => {
+    const target = argoApps.find((a) => a.id === appId);
+    const appName = target ? target.name : appId;
+
     setArgoApps((prev) =>
       prev.map((a) => (a.id === appId ? { ...a, syncStatus: 'Syncing' } : a))
     );
 
-    setTimeout(() => {
-      setArgoApps((prev) =>
-        prev.map((a) =>
-          a.id === appId
-            ? {
-                ...a,
-                syncStatus: 'Synced',
-                lastSyncedAt: 'just now',
-              }
-            : a
-        )
-      );
-      showToast(`ArgoCD synced application successfully`);
-    }, 1500);
+    try {
+      const res = await fetch(`/api/argo/applications/${encodeURIComponent(appName)}/sync`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        showToast(`Sync operation submitted for ${appName}`);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(`Failed to sync ${appName}: ${errData?.error || 'Unknown error'}`);
+        // Restore state
+        fetch('/api/argo/applications')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data?.applications) setArgoApps(data.applications);
+          });
+      }
+    } catch {
+      showToast(`Network error triggering sync for ${appName}`);
+    }
   };
 
-  const handleSyncAllArgo = () => {
+  const handleSyncAllArgo = async () => {
     setIsSyncingAllArgo(true);
     setArgoApps((prev) =>
-      prev.map((a) => ({ ...a, syncStatus: 'Syncing' }))
+      prev.map((a) => (a.syncStatus === 'OutOfSync' ? { ...a, syncStatus: 'Syncing' } : a))
     );
 
-    setTimeout(() => {
+    try {
+      const res = await fetch('/api/argo/sync-all', {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showToast(`Batch sync triggered for ${data.count} applications`);
+      } else {
+        showToast('Failed to trigger batch sync');
+      }
+    } catch {
+      showToast('Network error triggering batch sync');
+    } finally {
       setIsSyncingAllArgo(false);
-      setArgoApps((prev) =>
-        prev.map((a) => ({
-          ...a,
-          syncStatus: 'Synced',
-          lastSyncedAt: 'just now',
-        }))
-      );
-      showToast('All 8 ArgoCD applications reconciled & healthy!');
-    }, 2000);
+    }
+  };
+
+  const handleRefreshArgo = async () => {
+    setIsRefreshingArgo(true);
+    try {
+      const res = await fetch('/api/argo/refresh', {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.applications) {
+          setArgoApps(data.applications);
+          showToast(`Refreshed ${data.count} ArgoCD applications from cluster`);
+        }
+      } else {
+        showToast('Failed to refresh ArgoCD applications');
+      }
+    } catch {
+      showToast('Network error refreshing ArgoCD applications');
+    } finally {
+      setIsRefreshingArgo(false);
+    }
   };
 
   const handleResetToDefaults = () => {
@@ -821,7 +911,9 @@ export default function App() {
                             <ServiceCard
                               key={service.id}
                               service={service}
-                              argoApp={argoApps.find((a) => a.serviceId === service.id)}
+                              argoApp={argoApps.find(
+                                (a) => a.serviceId === service.id || a.name === service.argoAppName
+                              )}
                               showArgoIntegration={argoEnabled}
                               onTogglePin={handleTogglePin}
                               onLaunch={handleLaunchService}
@@ -847,6 +939,8 @@ export default function App() {
               isSyncingAll={isSyncingAllArgo}
               services={services}
               onLaunchService={handleLaunchService}
+              onRefresh={handleRefreshArgo}
+              isRefreshing={isRefreshingArgo}
             />
           )}
 

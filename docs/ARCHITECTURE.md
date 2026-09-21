@@ -73,13 +73,14 @@
 - **Auto-Sync Mode:** Allows optional automatic import of newly deployed routes into the active dashboard.
 
 ### 2.3 Pillar III: ArgoCD GitOps Integration
-- **Direct Controller Connection:** Uses in-cluster service account authentication against `http://argocd-server.argocd.svc.cluster.local:80` (or `https://argo.kerrlab.app`).
+- **Direct Kubernetes CRD Discovery:** Interacts directly with native `Application.argoproj.io/v1alpha1` custom resources via in-cluster `ServiceAccount` credentials (or local kubeconfig during development)—zero static secrets or tokens required.
 - **Live Sync & Health States:**
-  - Sync: `Synced` (green), `OutOfSync` (amber), `Syncing` (pulsing blue), `Unknown` (slate).
+  - Sync: `Synced` (green), `OutOfSync` (amber), `Syncing` (pulsing amber/blue), `Unknown` (slate).
   - Health: `Healthy`, `Progressing`, `Degraded`, `Missing`.
-- **Reconciliation Actions:**
-  - Per-service manual sync button directly on service cards.
-  - Global "Sync All" button to trigger batch reconciliation across all GitOps applications.
+- **Native Controller Reconciliation Actions:**
+  - Per-service manual sync button directly on service cards and GitOps view, patching `/operation` with `{ sync: { prune: true } }` to trigger the ArgoCD controller.
+  - Global "Sync All" button to batch reconcile all OutOfSync applications across the homelab cluster.
+  - SSE-powered live status updates (`argo:syncing`, `argo:updated`) without page refreshes.
 
 ### 2.4 Pillar IV: Operational Telemetry & Infrastructure Health
 - **Telemetry Strip:** Displays real-time gateway reachability, CoreDNS status, Cilium CNI operational status, and gateway RTT latency.
@@ -191,6 +192,6 @@ All declarative deployment manifests reside in the `homelab-k8s` repository unde
 - **Deployment:** Multi-replica or single-replica pod running non-root container (`10001:10001`), read-only root filesystem, memory request `64Mi` / limit `256Mi`.
 - **Service:** ClusterIP on port `3000`.
 - **HTTPRoute:** Bound to `cilium-gateway-l7` matching `kerrlab.app` and `launch.kerrlab.app`.
-- **ClusterRole & Binding:** Read-only access to `gateway.networking.k8s.io` and `networking.k8s.io`.
-- **ExternalSecret:** Fetches `ARGOCD_AUTH_TOKEN` and database credentials from Vaultwarden.
+- **ClusterRole & Binding:** Read access to `gateway.networking.k8s.io` and `networking.k8s.io` for route discovery; read, watch, patch, and update access to `argoproj.io/applications` for GitOps sync and health management (see `deploy/rbac.yaml`).
+- **ExternalSecret:** Fetches database credentials from Vaultwarden (no ArgoCD static token needed).
 - **ArgoCD Application:** Automated GitOps reconciliation with automated prune and self-heal.
