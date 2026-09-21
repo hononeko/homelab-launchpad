@@ -74,6 +74,10 @@ export function getK8sClient(): K8sClientContext {
     connectionMode = 'simulation';
   }
 
+  if (!isConnected) {
+    kc.loadFromClusterAndUser({ name: 'simulation', server: 'http://localhost', skipTLSVerify: true }, { name: 'simulation' });
+  }
+
   const customObjectsApi = kc.makeApiClient(k8s.CustomObjectsApi);
   const networkingV1Api = kc.makeApiClient(k8s.NetworkingV1Api);
   const coreV1Api = kc.makeApiClient(k8s.CoreV1Api);
