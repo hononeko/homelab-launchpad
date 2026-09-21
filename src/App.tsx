@@ -30,7 +30,17 @@ export default function App() {
   // Persistence state
   const [services, setServices] = useState<ServiceItem[]>(() => {
     const saved = localStorage.getItem('kerrlab_services');
-    return saved ? JSON.parse(saved) : INITIAL_SERVICES;
+    if (!saved) return INITIAL_SERVICES;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.some((s) => s.id === 'hass' && s.launchesPerWeek === 142)) {
+        localStorage.removeItem('kerrlab_services');
+        return INITIAL_SERVICES;
+      }
+      return parsed;
+    } catch {
+      return INITIAL_SERVICES;
+    }
   });
 
   const [argoApps, setArgoApps] = useState<ArgoApplication[]>(() => {
@@ -255,11 +265,10 @@ export default function App() {
       icon: route.suggestedIcon,
       category: route.suggestedCategory,
       isPinned: false,
-      launchesPerWeek: 1,
+      launchesPerWeek: 0,
       lastAccessed: 'just added',
       lastAccessedTimestamp: Date.now(),
       status: 'active',
-      latencyMs: 1.2,
       discoveredFrom: 'httproute',
       argoAppName: route.argoAppName,
     };
@@ -546,24 +555,78 @@ export default function App() {
               </div>
 
               {/* 4. Main Service Cards Grid (Desktop 3 cols, Tablet 2 cols, Mobile 1 col) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
-                {displayedServices.map((service) => {
-                  const linkedArgo = argoApps.find(
-                    (a) => a.serviceId === service.id || a.name === service.argoAppName
-                  );
+              {services.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 bg-[#0E1117]/80 border border-[#1C212B] border-dashed rounded-2xl text-center my-3">
+                  <div className="h-16 w-16 rounded-2xl bg-[#151921] border border-[#283141] flex items-center justify-center text-[#67df70] mb-4 shadow-inner">
+                    <span className="material-symbols-outlined text-[32px]">travel_explore</span>
+                  </div>
+                  <h3 className="text-base font-semibold text-white tracking-tight">
+                    No Services on Launchpad
+                  </h3>
+                  <p className="text-xs text-[#94A3B8] max-w-md mt-1.5 leading-relaxed">
+                    Auto-discover active Gateway API HTTPRoutes and Ingresses from your Kubernetes cluster, or import services to build your dashboard.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-3 mt-5">
+                    <button
+                      onClick={() => setIsAutoDiscoveryOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">radar</span>
+                      <span>Discover Cluster Routes</span>
+                    </button>
+                    <button
+                      onClick={() => setIsSearchOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-[#151921] hover:bg-[#1D2026] text-white border border-[#283141] hover:border-[#67df70]/40 rounded-xl font-mono text-xs transition-all cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">terminal</span>
+                      <span>Command Palette (⌘K)</span>
+                    </button>
+                  </div>
+                </div>
+              ) : displayedServices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-10 bg-[#0E1117]/50 border border-[#1C212B] rounded-2xl text-center my-3">
+                  <span className="material-symbols-outlined text-[28px] text-[#64748B] mb-2">
+                    filter_alt_off
+                  </span>
+                  <h3 className="text-sm font-semibold text-white">
+                    {searchQuery ? `No services matching "${searchQuery}"` : `No ${activeTab} services`}
+                  </h3>
+                  <p className="text-xs text-[#64748B] mt-1 max-w-sm">
+                    {searchQuery
+                      ? 'Try refining your search query or search by domain name.'
+                      : activeTab === 'pinned'
+                      ? 'Click the pin icon on any service card in the All Services tab to pin it to your overview.'
+                      : 'Launch services to see your most frequently used endpoints here.'}
+                  </p>
+                  {activeTab !== 'all' && (
+                    <button
+                      onClick={() => setActiveTab('all')}
+                      className="mt-4 px-3.5 py-1.5 rounded-lg bg-[#151921] hover:bg-[#1D2026] text-[#67df70] border border-[#283141] font-mono text-xs cursor-pointer"
+                    >
+                      View All Services ({services.length})
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
+                  {displayedServices.map((service) => {
+                    const linkedArgo = argoApps.find(
+                      (a) => a.serviceId === service.id || a.name === service.argoAppName
+                    );
 
-                  return (
-                    <ServiceCard
-                      key={service.id}
-                      service={service}
-                      argoApp={linkedArgo}
-                      showArgoIntegration={argoEnabled}
-                      onTogglePin={handleTogglePin}
-                      onLaunch={handleLaunchService}
-                    />
-                  );
-                })}
-              </div>
+                    return (
+                      <ServiceCard
+                        key={service.id}
+                        service={service}
+                        argoApp={linkedArgo}
+                        showArgoIntegration={argoEnabled}
+                        onTogglePin={handleTogglePin}
+                        onLaunch={handleLaunchService}
+                      />
+                    );
+                  })}
+                </div>
+              )}
 
               {/* 5. Expandable Remaining Services Accordion (as seen in Screen 3) */}
               {activeTab === 'pinned' && remainingServices.length > 0 && !searchQuery && (
@@ -708,37 +771,56 @@ export default function App() {
               </div>
 
               {/* Service Categories */}
-              {(['HOME & LIVING', 'MEDIA', 'TOOLS & DEV', 'CLUSTER & OPS'] as const).map(
-                (category) => {
-                  const catServices = services.filter((s) => s.category === category);
-                  if (catServices.length === 0) return null;
+              {services.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 bg-[#0E1117]/80 border border-[#1C212B] border-dashed rounded-2xl text-center">
+                  <div className="h-16 w-16 rounded-2xl bg-[#151921] border border-[#283141] flex items-center justify-center text-[#67df70] mb-4">
+                    <span className="material-symbols-outlined text-[32px]">hub</span>
+                  </div>
+                  <h3 className="text-base font-semibold text-white">No Services in Directory</h3>
+                  <p className="text-xs text-[#94A3B8] max-w-sm mt-1">
+                    Scan your Kubernetes cluster to discover and import active routes into the launchpad catalog.
+                  </p>
+                  <button
+                    onClick={() => setIsAutoDiscoveryOpen(true)}
+                    className="mt-5 flex items-center gap-2 px-4 py-2 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">travel_explore</span>
+                    <span>Discover Cluster Routes</span>
+                  </button>
+                </div>
+              ) : (
+                (['HOME & LIVING', 'MEDIA', 'TOOLS & DEV', 'CLUSTER & OPS'] as const).map(
+                  (category) => {
+                    const catServices = services.filter((s) => s.category === category);
+                    if (catServices.length === 0) return null;
 
-                  return (
-                    <div key={category} className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between border-b border-[#1C212B] pb-2">
-                        <span className="font-mono text-xs font-semibold text-[#67df70] tracking-wider">
-                          // {category} ({catServices.length})
-                        </span>
-                        <span className="font-mono text-[10px] text-[#64748B]">
-                          NAMESPACE ISOLATION
-                        </span>
-                      </div>
+                    return (
+                      <div key={category} className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between border-b border-[#1C212B] pb-2">
+                          <span className="font-mono text-xs font-semibold text-[#67df70] tracking-wider">
+                            // {category} ({catServices.length})
+                          </span>
+                          <span className="font-mono text-[10px] text-[#64748B]">
+                            NAMESPACE ISOLATION
+                          </span>
+                        </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                        {catServices.map((service) => (
-                          <ServiceCard
-                            key={service.id}
-                            service={service}
-                            argoApp={argoApps.find((a) => a.serviceId === service.id)}
-                            showArgoIntegration={argoEnabled}
-                            onTogglePin={handleTogglePin}
-                            onLaunch={handleLaunchService}
-                          />
-                        ))}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                          {catServices.map((service) => (
+                            <ServiceCard
+                              key={service.id}
+                              service={service}
+                              argoApp={argoApps.find((a) => a.serviceId === service.id)}
+                              showArgoIntegration={argoEnabled}
+                              onTogglePin={handleTogglePin}
+                              onLaunch={handleLaunchService}
+                            />
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
+                    );
+                  }
+                )
               )}
             </div>
           )}
