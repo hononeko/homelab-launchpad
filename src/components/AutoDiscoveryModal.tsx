@@ -12,6 +12,11 @@ interface AutoDiscoveryModalProps {
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
   onAddCustomRoute: (route: Partial<DiscoveredHTTPRoute>) => void;
+  k8sStatus?: {
+    connected: boolean;
+    server: string | null;
+    mode: string;
+  };
 }
 
 export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
@@ -25,6 +30,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   autoSyncEnabled,
   onToggleAutoSync,
   onAddCustomRoute,
+  k8sStatus,
 }) => {
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -99,12 +105,22 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-[#151921] hover:bg-[#1D2026] text-[#94A3B8] hover:text-white flex items-center justify-center transition-colors"
-          >
-            <span className="material-symbols-outlined text-[18px]">close</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {k8sStatus && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#151921] border border-[#283141] font-mono text-[10px]">
+                <span className={`w-1.5 h-1.5 rounded-full ${k8sStatus.connected ? 'bg-[#67df70] animate-pulse' : 'bg-amber-400'}`}></span>
+                <span className="text-[#CBD5E1]">
+                  {k8sStatus.connected ? 'K8s Cluster' : 'Simulation'}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg bg-[#151921] hover:bg-[#1D2026] text-[#94A3B8] hover:text-white flex items-center justify-center transition-colors"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
         </div>
 
         {/* Toolbar & Controls */}

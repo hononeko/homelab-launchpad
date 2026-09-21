@@ -44,6 +44,7 @@ export interface DiscoveredHTTPRoute {
   discoveredAt: string;
   suggestedCategory: 'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS';
   suggestedIcon: string;
+  argoAppName?: string;
 }
 
 export interface ClusterTelemetry {
