@@ -91,7 +91,7 @@ app.use('/api', apiRouter);
 
 // In production, serve static assets from dist
 if (isProd) {
-  const distPath = path.resolve(__dirname, '../dist');
+  const distPath = process.env.DIST_PATH || path.resolve(process.cwd(), 'dist');
   console.log(`[Server] Production mode: serving static files from ${distPath}`);
   app.use(express.static(distPath));
   app.get('*', limiter, (req, res) => {
