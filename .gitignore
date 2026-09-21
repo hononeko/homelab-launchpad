@@ -3,6 +3,7 @@ node_modules/
 
 # Production build outputs
 dist/
+dist-server/
 build/
 
 # Logs

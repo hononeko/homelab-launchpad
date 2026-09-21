@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "server": "tsx server/index.ts",
-    "start": "NODE_ENV=production tsx server/index.ts",
+    "start": "NODE_ENV=production node dist-server/index.mjs",
+    "start:tsx": "NODE_ENV=production tsx server/index.ts",
     "build": "vite build",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist-server/index.mjs",
+    "build:all": "npm run build && npm run build:server",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

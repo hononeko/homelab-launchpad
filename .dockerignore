@@ -1,0 +1,22 @@
+# Dependencies & Build artifacts
+node_modules
+dist
+dist-server
+
+# Git & Tooling
+.git
+.github
+.vscode
+.antigravity
+deploy
+docs
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Logs & Temporary Files
+*.log
+npm-debug.log*
+.DS_Store
