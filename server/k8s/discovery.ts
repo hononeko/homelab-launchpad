@@ -263,7 +263,7 @@ async function fetchWithFallback<T>(
       const fallbackRes = await k8sRequest<{ items?: any[] }>(fallbackPath);
       return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
     } catch (err: any) {
-      const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      const safeErr = String(err?.message || err).replace(/\n|\r/g, '');
       console.warn(`[Route Discovery] Failed to list ${resourceName}: %s`, safeErr);
       return [];
     }
@@ -321,7 +321,7 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
     console.log(`[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster.`);
     return cachedRoutes;
   } catch (err: any) {
-    const safeErr = String(err?.message || err).replace(/[\r\n]/g, ' ');
+    const safeErr = String(err?.message || err).replace(/\n|\r/g, '');
     console.error('[Route Discovery] Error scanning cluster routes: %s', safeErr);
     return cachedRoutes;
   }

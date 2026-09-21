@@ -75,7 +75,7 @@ apiRouter.get('/routes', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /routes error: %s', safeErr);
     res.status(500).json({
       success: false,
@@ -104,7 +104,7 @@ apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /routes/scan error: %s', safeErr);
     res.status(500).json({
       success: false,
@@ -144,7 +144,7 @@ apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /argo/applications error: %s', safeErr);
     res.status(500).json({
       success: false,
@@ -169,7 +169,7 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /argo/refresh error: %s', safeErr);
     res.status(500).json({
       success: false,
@@ -181,7 +181,7 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
 // 7. Trigger Sync for Single Application
 apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Response) => {
   const rawName = String(req.params.name ?? '');
-  const safeName = rawName.replace(/[\r\n\t]/g, '');
+  const safeName = rawName.replace(/\n|\r/g, '');
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(safeName)) {
     res.status(400).json({ success: false, error: 'Invalid application name' });
     return;
@@ -202,7 +202,7 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
       message: result.message,
     });
   } catch (error: any) {
-    const safeErr = String(error?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String(error?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /argo/applications/sync error for %s: %s', safeName, safeErr);
     res.status(500).json({
       success: false,
@@ -227,7 +227,7 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
       count: result.count,
     });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /argo/sync-all error: %s', safeErr);
     res.status(500).json({
       success: false,
@@ -244,7 +244,7 @@ async function handleTelemetry(res: Response, force: boolean) {
     }
     res.json({ success: true, ...data });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/[\r\n]/g, ' ');
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /telemetry%s error: %s', force ? '/refresh' : '', safeErr);
     res.status(500).json({
       success: false,
@@ -289,7 +289,7 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
       res.write(`event: telemetry:updated\ndata: ${JSON.stringify(data)}\n\n`);
     })
     .catch((err) => {
-      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
       console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
     });
 

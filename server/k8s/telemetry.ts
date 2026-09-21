@@ -240,7 +240,7 @@ export async function fetchClusterTelemetry(forceRefresh = false): Promise<Telem
 
     return cachedTelemetry;
   } catch (err) {
-    const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+    const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
     console.error('[Telemetry] Failed to fetch live cluster telemetry: %s', safeErr);
     if (cachedTelemetry) {
       return cachedTelemetry;

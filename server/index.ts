@@ -79,8 +79,8 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     if (req.path.startsWith('/api') && req.path !== '/api/routes/stream') {
       const duration = Date.now() - start;
-      const safePath = req.path.replace(/[\r\n\t]/g, '');
-      const safeMethod = req.method.replace(/[\r\n\t]/g, '');
+      const safePath = req.path.replace(/\n|\r/g, '');
+      const safeMethod = req.method.replace(/\n|\r/g, '');
       console.log(`[HTTP] ${safeMethod} ${safePath} -> ${res.statusCode} (${duration}ms)`);
     }
   });
@@ -115,7 +115,7 @@ app.listen(PORT, '0.0.0.0', async () => {
       const routes = await scanClusterRoutes();
       console.log(`[Server] Successfully discovered ${routes.length} HTTPRoutes in cluster.`);
     } catch (err) {
-      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
       console.warn('[Server] Initial cluster scan failed: %s', safeErr);
     }
 
@@ -124,7 +124,7 @@ app.listen(PORT, '0.0.0.0', async () => {
       const apps = await fetchArgoApplications();
       console.log(`[Server] Successfully discovered ${apps.length} ArgoCD applications in cluster.`);
     } catch (err) {
-      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
       console.warn('[Server] Initial ArgoCD applications scan failed: %s', safeErr);
     }
 
@@ -133,7 +133,7 @@ app.listen(PORT, '0.0.0.0', async () => {
       const { telemetry, nodes } = await fetchClusterTelemetry();
       console.log(`[Server] Telemetry initialized: ${nodes.length} nodes, ${telemetry.podsActive}/${telemetry.podsTotal} pods.`);
     } catch (err) {
-      const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
       console.warn('[Server] Initial cluster telemetry scan failed: %s', safeErr);
     }
 

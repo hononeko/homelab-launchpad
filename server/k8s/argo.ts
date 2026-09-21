@@ -104,7 +104,7 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
           const nsRes = await k8sRequest<{ items?: any[] }>('/apis/argoproj.io/v1alpha1/namespaces/argocd/applications');
           items = Array.isArray(nsRes?.items) ? nsRes.items : [];
         } catch (nsErr: any) {
-          const safeMsg = String(nsErr?.message || directErr?.message || 'unknown error').replace(/[\r\n]/g, ' ');
+          const safeMsg = String(nsErr?.message || directErr?.message || 'unknown error').replace(/\n|\r/g, '');
           console.warn('[Argo CRD] Failed to fetch Argo applications: %s', safeMsg);
           items = [];
         }
@@ -120,7 +120,7 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
     console.log(`[Argo CRD] Scanned ${cachedArgoApps.length} ArgoCD applications from cluster.`);
     return cachedArgoApps;
   } catch (err: any) {
-    const safeMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
+    const safeMsg = String(err?.message || err).replace(/\n|\r/g, '');
     console.error('[Argo CRD] Error fetching Argo applications: %s', safeMsg);
     return cachedArgoApps;
   }
@@ -202,8 +202,8 @@ export async function syncArgoApplication(
       message: `Sync operation submitted to ArgoCD controller for ${name}`,
     };
   } catch (err: any) {
-    const safeName = String(name).replace(/[\r\n]/g, '');
-    const safeMsg = String(err?.response?.body?.message || err?.message || err).replace(/[\r\n]/g, ' ');
+    const safeName = String(name).replace(/\n|\r/g, '');
+    const safeMsg = String(err?.response?.body?.message || err?.message || err).replace(/\n|\r/g, '');
     console.error('[Argo CRD] Failed to sync application %s: %s', safeName, safeMsg);
     if (targetApp) {
       targetApp.syncStatus = 'OutOfSync';
@@ -230,8 +230,8 @@ export async function syncAllArgoApplications(): Promise<{
       await syncArgoApplication(app.name);
       triggered.push(app.name);
     } catch (err: any) {
-      const safeAppName = String(app.name).replace(/[\r\n]/g, '');
-      const safeMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
+      const safeAppName = String(app.name).replace(/\n|\r/g, '');
+      const safeMsg = String(err?.message || err).replace(/\n|\r/g, '');
       console.warn('[Argo CRD] Batch sync failed for %s: %s', safeAppName, safeMsg);
     }
   }

@@ -68,7 +68,7 @@ export function getK8sClient(): K8sClientContext {
       console.warn('[K8s Client] No active cluster server found in config, running in simulation mode');
     }
   } catch (err) {
-    const safeErr = String((err as Error)?.message || err).replace(/[\r\n]/g, ' ');
+    const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
     console.warn('[K8s Client] Could not load Kubernetes configuration, falling back to simulation mode: %s', safeErr);
     isConnected = false;
     connectionMode = 'simulation';
@@ -170,12 +170,11 @@ export function k8sRequest<T>(
           if (statusCode >= 200 && statusCode < 300) {
             try {
               resolve(body ? (JSON.parse(body) as T) : ({} as T));
-            } catch (parseErr) {
-              reject(new Error(`Failed to parse Kubernetes API JSON response: ${(parseErr as Error).message}`));
+            } catch {
+              reject(new Error('Failed to parse Kubernetes API JSON response'));
             }
           } else {
-            const safePreview = body.slice(0, 300).replace(/[\r\n]/g, ' ');
-            reject(new Error(`Kubernetes API error ${statusCode}: ${safePreview}`));
+            reject(new Error(`Kubernetes API error HTTP ${statusCode}`));
           }
         });
       }
@@ -183,12 +182,11 @@ export function k8sRequest<T>(
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`Kubernetes API request to ${endpoint} timed out after ${timeoutMs}ms`));
+      reject(new Error(`Kubernetes API request timed out after ${timeoutMs}ms`));
     });
 
-    req.on('error', (err) => {
-      const safeErrMsg = String(err?.message || err).replace(/[\r\n]/g, ' ');
-      reject(new Error(safeErrMsg));
+    req.on('error', () => {
+      reject(new Error('Kubernetes API request failed due to a network error'));
     });
 
     if (requestBody) {
