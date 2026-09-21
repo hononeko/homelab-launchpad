@@ -17,10 +17,23 @@ const isProd = process.env.NODE_ENV === 'production';
 // Disable fingerprinting headers
 app.disable('x-powered-by');
 
-// Security headers with Helmet
+// Security headers with Helmet and Content Security Policy directives
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'", 'ws:', 'wss:', 'https:', 'http:'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   })
 );
@@ -35,18 +48,18 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Restricted CORS configuration
-const ALLOWED_ORIGINS = [
+// Restricted CORS configuration using Set lookup
+const ALLOWED_ORIGINS = new Set([
   'http://localhost:3000',
   'http://localhost:3001',
   'https://kerrlab.app',
   'https://launch.kerrlab.app',
-];
+]);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      if (!origin || ALLOWED_ORIGINS.has(origin)) {
         callback(null, true);
       } else {
         callback(null, false);
