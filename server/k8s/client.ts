@@ -25,7 +25,7 @@ export function getK8sClient(): K8sClientContext {
   try {
     kc.loadFromDefault();
     const currentCluster = kc.getCurrentCluster();
-    if (currentCluster && currentCluster.server) {
+    if (currentCluster?.server) {
       isConnected = true;
       clusterServer = currentCluster.server;
       connectionMode = process.env.KUBERNETES_SERVICE_HOST ? 'cluster' : 'kubeconfig';

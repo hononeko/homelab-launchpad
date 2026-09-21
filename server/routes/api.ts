@@ -5,7 +5,6 @@ import {
   getCachedRoutes,
   getLastScannedAt,
   markRouteImported,
-  DiscoveredRoute,
 } from '../k8s/discovery';
 
 export const apiRouter = Router();
