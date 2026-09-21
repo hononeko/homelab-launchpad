@@ -6,6 +6,13 @@ import {
   getLastScannedAt,
   markRouteImported,
 } from '../k8s/discovery';
+import {
+  fetchArgoApplications,
+  getCachedArgoApps,
+  getLastArgoScannedAt,
+  syncArgoApplication,
+  syncAllArgoApplications,
+} from '../k8s/argo';
 
 export const apiRouter = Router();
 
@@ -22,6 +29,10 @@ function broadcastSSE(eventType: string, data: any) {
 // 1. Healthcheck Endpoint
 apiRouter.get('/health', (req: Request, res: Response) => {
   const client = getK8sClient();
+  const argoApps = getCachedArgoApps();
+  const argoSynced = argoApps.filter((a) => a.syncStatus === 'Synced').length;
+  const argoOutOfSync = argoApps.filter((a) => a.syncStatus === 'OutOfSync').length;
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -29,6 +40,16 @@ apiRouter.get('/health', (req: Request, res: Response) => {
       connected: client.isConnected,
       mode: client.connectionMode,
       server: client.clusterServer || null,
+    },
+    routes: {
+      totalCached: getCachedRoutes().length,
+      lastScannedAt: getLastScannedAt(),
+    },
+    argo: {
+      totalCached: argoApps.length,
+      synced: argoSynced,
+      outOfSync: argoOutOfSync,
+      lastScannedAt: getLastArgoScannedAt(),
     },
     lastScannedAt: getLastScannedAt(),
     totalRoutesCached: getCachedRoutes().length,
@@ -102,7 +123,103 @@ apiRouter.post('/routes/import', (req: Request, res: Response) => {
   }
 });
 
-// 5. Server-Sent Events (SSE) Stream
+// 5. ArgoCD Applications Endpoint
+apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
+  try {
+    let applications = getCachedArgoApps();
+    if (applications.length === 0) {
+      applications = await fetchArgoApplications();
+    }
+    res.json({
+      success: true,
+      applications,
+      count: applications.length,
+      lastScannedAt: getLastArgoScannedAt(),
+    });
+  } catch (error: any) {
+    console.error('[API] /argo/applications error:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to fetch ArgoCD applications',
+    });
+  }
+});
+
+// 6. ArgoCD Refresh Scan
+apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
+  try {
+    const applications = await fetchArgoApplications();
+    broadcastSSE('argo:updated', {
+      applications,
+      lastScannedAt: getLastArgoScannedAt(),
+      count: applications.length,
+    });
+    res.json({
+      success: true,
+      applications,
+      count: applications.length,
+      lastScannedAt: getLastArgoScannedAt(),
+    });
+  } catch (error: any) {
+    console.error('[API] /argo/refresh error:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to refresh ArgoCD applications',
+    });
+  }
+});
+
+// 7. Trigger Sync for Single Application
+apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Response) => {
+  const { name } = req.params;
+  try {
+    const result = await syncArgoApplication(name);
+
+    broadcastSSE('argo:syncing', { name });
+    broadcastSSE('argo:updated', {
+      applications: getCachedArgoApps(),
+      lastScannedAt: getLastArgoScannedAt(),
+    });
+
+    res.json({
+      success: true,
+      name,
+      message: result.message,
+    });
+  } catch (error: any) {
+    console.error(`[API] /argo/applications/${name}/sync error:`, error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || `Failed to trigger sync for ${name}`,
+    });
+  }
+});
+
+// 8. Trigger Batch Sync for OutOfSync Applications
+apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
+  try {
+    const result = await syncAllArgoApplications();
+
+    broadcastSSE('argo:updated', {
+      applications: getCachedArgoApps(),
+      lastScannedAt: getLastArgoScannedAt(),
+    });
+
+    res.json({
+      success: true,
+      triggered: result.triggered,
+      count: result.count,
+    });
+  } catch (error: any) {
+    console.error('[API] /argo/sync-all error:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to trigger batch sync',
+    });
+  }
+});
+
+// 9. Server-Sent Events (SSE) Stream
 apiRouter.get('/routes/stream', (req: Request, res: Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -111,9 +228,16 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
     'Access-Control-Allow-Origin': '*',
   });
 
-  // Send initial connected event with current routes
+  // Send initial connected event with current routes and argo counts
   const initialRoutes = getCachedRoutes();
-  res.write(`event: connected\ndata: ${JSON.stringify({ connected: true, routesCount: initialRoutes.length })}\n\n`);
+  const initialArgo = getCachedArgoApps();
+  res.write(
+    `event: connected\ndata: ${JSON.stringify({
+      connected: true,
+      routesCount: initialRoutes.length,
+      argoCount: initialArgo.length,
+    })}\n\n`
+  );
 
   sseClients.add(res);
 
