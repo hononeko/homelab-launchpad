@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Install dependencies with frozen lockfile
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 # Copy source files
 COPY . .
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build:all
 
 # Prune devDependencies to keep production image minimal
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --ignore-scripts
 
 # ==============================================================================
 # Stage 2: Minimal Production Runtime
