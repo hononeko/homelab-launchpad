@@ -64,6 +64,76 @@ export default function App() {
   const [isSyncingAllArgo, setIsSyncingAllArgo] = useState(false);
   const [showExtendedServices, setShowExtendedServices] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [k8sStatus, setK8sStatus] = useState<{
+    connected: boolean;
+    server: string | null;
+    mode: string;
+  }>({
+    connected: false,
+    server: null,
+    mode: 'simulation',
+  });
+
+  // Fetch initial routes from backend and subscribe to SSE stream
+  useEffect(() => {
+    // 1. Fetch health & connection status
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.k8s) {
+          setK8sStatus({
+            connected: data.k8s.connected,
+            server: data.k8s.server,
+            mode: data.k8s.mode,
+          });
+        }
+      })
+      .catch((err) => console.warn('[App] Healthcheck error:', err));
+
+    // 2. Fetch discovered routes
+    fetch('/api/routes')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) {
+          setDiscoveredRoutes((prev) => {
+            const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
+            return data.routes.map((r: DiscoveredHTTPRoute) => ({
+              ...r,
+              status: importedSet.has(r.id) ? 'imported' : r.status,
+            }));
+          });
+        }
+      })
+      .catch((err) => console.warn('[App] Initial routes fetch error:', err));
+
+    // 3. Connect to SSE stream for live updates
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/routes/stream');
+      eventSource.addEventListener('routes:updated', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload?.routes) {
+            setDiscoveredRoutes((prev) => {
+              const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
+              return payload.routes.map((r: DiscoveredHTTPRoute) => ({
+                ...r,
+                status: importedSet.has(r.id) ? 'imported' : r.status,
+              }));
+            });
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse routes:updated event:', parseErr);
+        }
+      });
+    } catch (sseErr) {
+      console.warn('[SSE] EventSource init failed:', sseErr);
+    }
+
+    return () => {
+      eventSource?.close();
+    };
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -149,23 +219,36 @@ export default function App() {
   };
 
   // Auto-Discovery actions
-  const handleScanClusterRoutes = () => {
+  const handleScanClusterRoutes = async () => {
     setIsScanningRoutes(true);
-    setTimeout(() => {
+    try {
+      const importedIds = discoveredRoutes.filter((r) => r.status === 'imported').map((r) => r.id);
+      const res = await fetch('/api/routes/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ importedIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.routes) {
+          setDiscoveredRoutes(data.routes);
+          showToast(`Cluster scan complete: ${data.count} HTTPRoutes verified via Gateway API`);
+        }
+      } else {
+        showToast('Scan complete (offline simulation)');
+      }
+    } catch {
+      showToast('Scan complete (fallback mode)');
+    } finally {
       setIsScanningRoutes(false);
-      // Simulate discovering or refreshing routes
-      showToast('Cluster scan complete: 4 HTTPRoutes verified via Cilium Gateway');
-    }, 1200);
+    }
   };
 
-  const handleImportRoute = (route: DiscoveredHTTPRoute) => {
+  const handleImportRoute = async (route: DiscoveredHTTPRoute) => {
     // Add to services list
     const newService: ServiceItem = {
       id: `imported-${route.id}`,
-      name: route.name
-        .split('-')
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' '),
+      name: route.name,
       url: `https://${route.host}`,
       displayUrl: route.host,
       description: `Discovered from k8s ns: ${route.namespace} (${route.backendService})`,
@@ -178,14 +261,26 @@ export default function App() {
       status: 'active',
       latencyMs: 1.2,
       discoveredFrom: 'httproute',
+      argoAppName: route.argoAppName,
     };
 
     setServices((prev) => [newService, ...prev]);
 
-    // Mark route as imported
+    // Mark route as imported locally
     setDiscoveredRoutes((prev) =>
       prev.map((r) => (r.id === route.id ? { ...r, status: 'imported' } : r))
     );
+
+    // Persist to backend if available
+    try {
+      await fetch('/api/routes/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routeId: route.id }),
+      });
+    } catch {
+      // Non-blocking
+    }
 
     showToast(`Imported ${newService.name} into Launchpad!`);
   };
@@ -710,6 +805,7 @@ export default function App() {
         autoSyncEnabled={autoSyncRoutes}
         onToggleAutoSync={() => setAutoSyncRoutes(!autoSyncRoutes)}
         onAddCustomRoute={handleAddCustomRoute}
+        k8sStatus={k8sStatus}
       />
 
       {/* Cluster Telemetry & Node Modal */}
