@@ -13,6 +13,7 @@ import {
   syncArgoApplication,
   syncAllArgoApplications,
 } from '../k8s/argo';
+import { fetchClusterTelemetry, TelemetryData } from '../k8s/telemetry';
 
 export const apiRouter = Router();
 
@@ -24,6 +25,10 @@ function broadcastSSE(eventType: string, data: any) {
   for (const client of sseClients) {
     client.write(message);
   }
+}
+
+export function broadcastTelemetry(data: TelemetryData) {
+  broadcastSSE('telemetry:updated', data);
 }
 
 // 1. Healthcheck Endpoint
@@ -70,10 +75,11 @@ apiRouter.get('/routes', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes error:', error);
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /routes error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to fetch routes',
+      error: 'Failed to fetch routes',
     });
   }
 });
@@ -98,10 +104,11 @@ apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
       count: routes.length,
     });
   } catch (error: any) {
-    console.error('[API] /routes/scan error:', error);
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /routes/scan error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to scan cluster routes',
+      error: 'Failed to scan cluster routes',
     });
   }
 });
@@ -137,10 +144,11 @@ apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/applications error:', error);
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /argo/applications error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to fetch ArgoCD applications',
+      error: 'Failed to fetch ArgoCD applications',
     });
   }
 });
@@ -161,10 +169,11 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
       lastScannedAt: getLastArgoScannedAt(),
     });
   } catch (error: any) {
-    console.error('[API] /argo/refresh error:', error);
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /argo/refresh error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to refresh ArgoCD applications',
+      error: 'Failed to refresh ArgoCD applications',
     });
   }
 });
@@ -172,7 +181,7 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
 // 7. Trigger Sync for Single Application
 apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Response) => {
   const rawName = String(req.params.name ?? '');
-  const safeName = rawName.replace(/[\r\n\t]/g, '');
+  const safeName = rawName.replace(/\n|\r/g, '');
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(safeName)) {
     res.status(400).json({ success: false, error: 'Invalid application name' });
     return;
@@ -193,10 +202,11 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
       message: result.message,
     });
   } catch (error: any) {
-    console.error('[API] /argo/applications/sync error for %s:', safeName, error?.message || error);
+    const safeErr = String(error?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /argo/applications/sync error for %s: %s', safeName, safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || `Failed to trigger sync for ${safeName}`,
+      error: `Failed to trigger sync for ${safeName}`,
     });
   }
 });
@@ -217,15 +227,43 @@ apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
       count: result.count,
     });
   } catch (error: any) {
-    console.error('[API] /argo/sync-all error:', error);
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /argo/sync-all error: %s', safeErr);
     res.status(500).json({
       success: false,
-      error: error?.message || 'Failed to trigger batch sync',
+      error: 'Failed to trigger batch sync',
     });
   }
 });
 
-// 9. Server-Sent Events (SSE) Stream
+async function handleTelemetry(res: Response, force: boolean) {
+  try {
+    const data = await fetchClusterTelemetry(force);
+    if (force) {
+      broadcastTelemetry(data);
+    }
+    res.json({ success: true, ...data });
+  } catch (error: any) {
+    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    console.error('[API] /telemetry%s error: %s', force ? '/refresh' : '', safeErr);
+    res.status(500).json({
+      success: false,
+      error: `Failed to ${force ? 'refresh' : 'fetch'} cluster telemetry`,
+    });
+  }
+}
+
+// 9. Real-Time Cluster Telemetry Endpoint
+apiRouter.get('/telemetry', (_req: Request, res: Response) => {
+  void handleTelemetry(res, false);
+});
+
+// 10. Force Refresh Telemetry
+apiRouter.post('/telemetry/refresh', (_req: Request, res: Response) => {
+  void handleTelemetry(res, true);
+});
+
+// 11. Server-Sent Events (SSE) Stream
 apiRouter.get('/routes/stream', (req: Request, res: Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -244,6 +282,16 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
       argoCount: initialArgo.length,
     })}\n\n`
   );
+
+  // Send current telemetry state immediately on connection
+  fetchClusterTelemetry()
+    .then((data) => {
+      res.write(`event: telemetry:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    })
+    .catch((err) => {
+      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
+      console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
+    });
 
   sseClients.add(res);
 

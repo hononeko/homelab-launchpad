@@ -31,6 +31,8 @@ export default function App() {
   const [services, setServices] = useState<ServiceItem[]>(() => {
     try {
       localStorage.removeItem('kerrlab_services');
+      localStorage.removeItem('kerrlab_argo_apps');
+      localStorage.removeItem('kerrlab_discovered_routes');
     } catch {
       // Ignore storage errors in restricted contexts
     }
@@ -48,15 +50,8 @@ export default function App() {
     }
   });
 
-  const [argoApps, setArgoApps] = useState<ArgoApplication[]>(() => {
-    const saved = localStorage.getItem('kerrlab_argo_apps');
-    return saved ? JSON.parse(saved) : INITIAL_ARGO_APPS;
-  });
-
-  const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(() => {
-    const saved = localStorage.getItem('kerrlab_discovered_routes');
-    return saved ? JSON.parse(saved) : INITIAL_DISCOVERED_ROUTES;
-  });
+  const [argoApps, setArgoApps] = useState<ArgoApplication[]>(INITIAL_ARGO_APPS);
+  const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(INITIAL_DISCOVERED_ROUTES);
 
   const [argoEnabled, setArgoEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('kerrlab_argo_enabled');
@@ -67,6 +62,9 @@ export default function App() {
     const saved = localStorage.getItem('kerrlab_autosync_routes');
     return saved !== null ? JSON.parse(saved) : false;
   });
+
+  const [telemetry, setTelemetry] = useState<ClusterTelemetry>(INITIAL_TELEMETRY);
+  const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>(INITIAL_NODES);
 
   // UI state
   const [currentView, setCurrentView] = useState<MainView>('overview');
@@ -132,7 +130,20 @@ export default function App() {
       })
       .catch((err) => console.warn('[App] Initial argo apps fetch error:', err));
 
-    // 4. Connect to SSE stream for live updates
+    // 4. Fetch cluster telemetry & nodes
+    fetch('/api/telemetry')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && data.telemetry) {
+          setTelemetry(data.telemetry);
+          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+            setClusterNodes(data.nodes);
+          }
+        }
+      })
+      .catch((err) => console.warn('[App] Initial telemetry fetch error:', err));
+
+    // 5. Connect to SSE stream for live updates
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/routes/stream');
@@ -176,6 +187,20 @@ export default function App() {
           console.error('[SSE] Failed to parse argo:syncing event:', parseErr);
         }
       });
+
+      eventSource.addEventListener('telemetry:updated', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload?.telemetry) {
+            setTelemetry(payload.telemetry);
+            if (Array.isArray(payload.nodes) && payload.nodes.length > 0) {
+              setClusterNodes(payload.nodes);
+            }
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse telemetry:updated event:', parseErr);
+        }
+      });
     } catch (sseErr) {
       console.warn('[SSE] EventSource init failed:', sseErr);
     }
@@ -189,14 +214,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('launchpad_services', JSON.stringify(services));
   }, [services]);
-
-  useEffect(() => {
-    localStorage.setItem('kerrlab_argo_apps', JSON.stringify(argoApps));
-  }, [argoApps]);
-
-  useEffect(() => {
-    localStorage.setItem('kerrlab_discovered_routes', JSON.stringify(discoveredRoutes));
-  }, [discoveredRoutes]);
 
   useEffect(() => {
     localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(argoEnabled));
@@ -585,7 +602,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
               {/* 2. Telemetry Strip */}
               <TelemetryStrip
-                telemetry={INITIAL_TELEMETRY}
+                telemetry={telemetry}
                 totalServices={services.length}
                 onOpenSearch={() => setIsSearchOpen(true)}
                 onOpenClusterModal={() => setIsClusterModalOpen(true)}
@@ -999,8 +1016,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
       <ClusterModal
         isOpen={isClusterModalOpen}
         onClose={() => setIsClusterModalOpen(false)}
-        telemetry={INITIAL_TELEMETRY}
-        nodes={INITIAL_NODES}
+        telemetry={telemetry}
+        nodes={clusterNodes}
       />
     </div>
   );

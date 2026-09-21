@@ -83,13 +83,19 @@
   - SSE-powered live status updates (`argo:syncing`, `argo:updated`) without page refreshes.
 
 ### 2.4 Pillar IV: Operational Telemetry & Infrastructure Health
-- **Telemetry Strip:** Displays real-time gateway reachability, CoreDNS status, Cilium CNI operational status, and gateway RTT latency.
+- **Telemetry Strip:** Displays real-time gateway reachability, CoreDNS status, Cilium CNI operational status, and high-resolution gateway RTT latency.
+- **Real-Time Telemetry Pipeline:**
+  - Scrapes Kubernetes Metrics Server (`metrics.k8s.io/v1beta1/nodes`) for live CPU (nanocores) and RAM (KiB) per node.
+  - Queries Core Kubernetes API (`/api/v1/nodes` and `/api/v1/pods`) for allocatable capacities, running vs pending/succeeded pods, and per-node pod counts.
+  - Queries Longhorn Storage CRDs (`longhorn.io/v1beta2/namespaces/longhorn-system/nodes`) for aggregated storage pool capacity and used bytes.
+  - Computes active RTT latency against the cluster API server.
+  - High-performance 5-second TTL cache with automatic warmup and background SSE broadcasting (`telemetry:updated`).
 - **Cluster Operations Modal (`ClusterModal`):**
-  - **Pods Active:** Running pods vs total allocatable capacity (`sum(kube_pod_status_phase{phase="Running"})` / allocatable).
-  - **Aggregate CPU Cores:** Total cluster core utilization percentage.
-  - **NVMe Storage Pool:** Pool utilization and capacity for distributed storage (Longhorn / Synology CSI).
+  - **Pods Active:** Running pods vs total allocatable capacity (`sum(running_pods)` / allocatable).
+  - **Aggregate CPU Cores:** Total cluster core utilization percentage and active cores.
+  - **NVMe Storage Pool:** Pool utilization and capacity for distributed storage (Longhorn NVMe pools).
   - **Ingress Rate:** Network bandwidth throughput and traffic states.
-  - **Node Matrix:** Control plane and worker node condition, IP address, uptime, CPU/memory usage, and Talos version.
+  - **Node Matrix:** Control plane and worker node condition, IP address, uptime, CPU/memory usage, and Talos Linux version.
 
 ### 2.5 Pillar V: Security, Access Control & Forward-Auth
 - **Authelia Forward-Auth Integration:**
@@ -154,26 +160,49 @@ User Browser                      Launchpad Backend                    K8s API /
 - `POST /api/argo/sync-all`: Triggers batch synchronization across all homelab apps.
 
 ### 4.3 Telemetry (`/api/telemetry`)
-- `GET /api/telemetry`: Returns aggregated cluster telemetry (cached with 5-second TTL).
+- `GET /api/telemetry`: Returns aggregated cluster telemetry and individual node metrics (cached with 5-second TTL).
   ```json
   {
-    "podsActive": 74,
-    "podsTotal": 110,
-    "podsPercent": 67,
-    "aggCpuCores": 18.2,
-    "aggCpuPercent": 42,
-    "nvmeUsedTb": 4.12,
-    "nvmeTotalTb": 14.5,
-    "nvmePercent": 28.4,
-    "nvmePoolName": "LONGHORN_NVME_POOL",
-    "ingressRate": "142 MB/S",
-    "rttMs": 0.4,
-    "nodeCount": 3,
-    "dns": "CoreDNS",
-    "cni": "Cilium L7",
-    "statusText": "ALL SYSTEMS OPERATIONAL"
+    "success": true,
+    "source": "live",
+    "cached": true,
+    "telemetry": {
+      "podsActive": 223,
+      "podsTotal": 440,
+      "podsPercent": 51,
+      "aggCpuCores": 2.78,
+      "aggCpuTotal": 27.8,
+      "aggCpuPercent": 10,
+      "nvmeUsedTb": 1.34,
+      "nvmeTotalTb": 1.85,
+      "nvmePercent": 72.4,
+      "nvmePoolName": "LONGHORN_NVME_POOL",
+      "ingressRate": "142 MB/S",
+      "ingressState": "NOMINAL",
+      "ingressPercent": 14,
+      "rttMs": 1.8,
+      "nodeCount": 4,
+      "dns": "CoreDNS",
+      "cni": "Cilium L7",
+      "statusText": "ALL SYSTEMS OPERATIONAL"
+    },
+    "nodes": [
+      {
+        "name": "lab-1",
+        "role": "controlplane",
+        "status": "Ready",
+        "ip": "192.168.1.11",
+        "uptime": "14d 6h",
+        "version": "v1.31.0",
+        "cpuUsage": 12,
+        "memoryUsage": 38,
+        "pods": 68,
+        "maxPods": 110
+      }
+    ]
   }
   ```
+- `POST /api/telemetry/refresh`: Forces immediate scrape of cluster telemetry bypassing the TTL cache and broadcasts update to SSE clients.
 
 ### 4.4 User Preferences & Persistence (`/api/user/preferences`)
 - `GET /api/user/preferences`: Returns user's pinned services, custom order, and hidden categories.
@@ -192,6 +221,11 @@ All declarative deployment manifests reside in the `homelab-k8s` repository unde
 - **Deployment:** Multi-replica or single-replica pod running non-root container (`10001:10001`), read-only root filesystem, memory request `64Mi` / limit `256Mi`.
 - **Service:** ClusterIP on port `3000`.
 - **HTTPRoute:** Bound to `cilium-gateway-l7` matching `kerrlab.app` and `launch.kerrlab.app`.
-- **ClusterRole & Binding:** Read access to `gateway.networking.k8s.io` and `networking.k8s.io` for route discovery; read, watch, patch, and update access to `argoproj.io/applications` for GitOps sync and health management (see `deploy/rbac.yaml`).
+- **ClusterRole & Binding:**
+  - Read access to `gateway.networking.k8s.io` and `networking.k8s.io` for route discovery.
+  - Read, watch, patch, and update access to `argoproj.io/applications` for GitOps sync and health management.
+  - Read access to core `nodes` and `pods` (`/api/v1`) for topology and capacity statistics.
+  - Read access to `metrics.k8s.io` (`nodes`, `pods`) for live CPU and memory metrics.
+  - Read access to `longhorn.io/nodes` for distributed NVMe storage pool capacity and utilization (see `deploy/rbac.yaml`).
 - **ExternalSecret:** Fetches database credentials from Vaultwarden (no ArgoCD static token needed).
 - **ArgoCD Application:** Automated GitOps reconciliation with automated prune and self-heal.

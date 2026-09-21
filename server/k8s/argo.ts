@@ -1,4 +1,4 @@
-import { getK8sClient } from './client';
+import { getK8sClient, k8sRequest } from './client';
 import { ArgoApplication } from '../../src/types';
 import { INITIAL_ARGO_APPS } from '../../src/data/initialData';
 
@@ -95,15 +95,20 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
         plural: 'applications',
       })) as { items?: any[] };
       items = Array.isArray(res?.items) ? res.items : [];
-    } catch (clusterErr: any) {
-      console.warn('[Argo CRD] listClusterCustomObject failed, falling back to namespaced argocd:', clusterErr?.message || clusterErr);
-      const nsRes = (await client.customObjectsApi.listNamespacedCustomObject({
-        group: 'argoproj.io',
-        version: 'v1alpha1',
-        namespace: 'argocd',
-        plural: 'applications',
-      })) as { items?: any[] };
-      items = Array.isArray(nsRes?.items) ? nsRes.items : [];
+    } catch {
+      try {
+        const directRes = await k8sRequest<{ items?: any[] }>('/apis/argoproj.io/v1alpha1/applications');
+        items = Array.isArray(directRes?.items) ? directRes.items : [];
+      } catch (directErr: any) {
+        try {
+          const nsRes = await k8sRequest<{ items?: any[] }>('/apis/argoproj.io/v1alpha1/namespaces/argocd/applications');
+          items = Array.isArray(nsRes?.items) ? nsRes.items : [];
+        } catch (nsErr: any) {
+          const safeMsg = String(nsErr?.message || directErr?.message || 'unknown error').replace(/\n|\r/g, '');
+          console.warn('[Argo CRD] Failed to fetch Argo applications: %s', safeMsg);
+          items = [];
+        }
+      }
     }
 
     const apps = items
@@ -115,7 +120,8 @@ export async function fetchArgoApplications(): Promise<ArgoApplication[]> {
     console.log(`[Argo CRD] Scanned ${cachedArgoApps.length} ArgoCD applications from cluster.`);
     return cachedArgoApps;
   } catch (err: any) {
-    console.error('[Argo CRD] Error fetching Argo applications:', err?.message || err);
+    const safeMsg = String(err?.message || err).replace(/\n|\r/g, '');
+    console.error('[Argo CRD] Error fetching Argo applications: %s', safeMsg);
     return cachedArgoApps;
   }
 }
@@ -169,14 +175,25 @@ export async function syncArgoApplication(
       },
     ];
 
-    await client.customObjectsApi.patchNamespacedCustomObject({
-      group: 'argoproj.io',
-      version: 'v1alpha1',
-      namespace,
-      plural: 'applications',
-      name,
-      body: patchBody,
-    });
+    try {
+      await client.customObjectsApi.patchNamespacedCustomObject({
+        group: 'argoproj.io',
+        version: 'v1alpha1',
+        namespace,
+        plural: 'applications',
+        name,
+        body: patchBody,
+      });
+    } catch {
+      await k8sRequest(
+        `/apis/argoproj.io/v1alpha1/namespaces/${encodeURIComponent(namespace)}/applications/${encodeURIComponent(name)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json-patch+json' },
+          body: patchBody,
+        }
+      );
+    }
 
     console.log(`[Argo CRD] Successfully initiated sync for application: ${name}`);
     return {
@@ -185,11 +202,13 @@ export async function syncArgoApplication(
       message: `Sync operation submitted to ArgoCD controller for ${name}`,
     };
   } catch (err: any) {
-    console.error(`[Argo CRD] Failed to sync application ${name}:`, err?.response?.body || err?.message || err);
+    const safeName = String(name).replace(/\n|\r/g, '');
+    const safeMsg = String(err?.response?.body?.message || err?.message || err).replace(/\n|\r/g, '');
+    console.error('[Argo CRD] Failed to sync application %s: %s', safeName, safeMsg);
     if (targetApp) {
       targetApp.syncStatus = 'OutOfSync';
     }
-    throw new Error(err?.response?.body?.message || err?.message || `Failed to sync application ${name}`);
+    throw new Error(safeMsg || `Failed to sync application ${safeName}`);
   }
 }
 
@@ -211,7 +230,9 @@ export async function syncAllArgoApplications(): Promise<{
       await syncArgoApplication(app.name);
       triggered.push(app.name);
     } catch (err: any) {
-      console.warn(`[Argo CRD] Batch sync failed for ${app.name}:`, err?.message || err);
+      const safeAppName = String(app.name).replace(/\n|\r/g, '');
+      const safeMsg = String(err?.message || err).replace(/\n|\r/g, '');
+      console.warn('[Argo CRD] Batch sync failed for %s: %s', safeAppName, safeMsg);
     }
   }
 

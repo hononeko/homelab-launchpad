@@ -1,4 +1,4 @@
-import { getK8sClient } from './client';
+import { getK8sClient, k8sRequest } from './client';
 import { INITIAL_DISCOVERED_ROUTES } from '../../src/data/initialData';
 
 export type HomelabCategory = 'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS';
@@ -250,28 +250,44 @@ function parseIngresses(
   return routes;
 }
 
-async function fetchHttpRoutes(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
+async function fetchWithFallback<T>(
+  primary: () => Promise<T>,
+  fallbackPath: string,
+  resourceName: string
+): Promise<any[]> {
   try {
-    const res = (await client.customObjectsApi.listClusterCustomObject({
-      group: 'gateway.networking.k8s.io',
-      version: 'v1',
-      plural: 'httproutes',
-    })) as { items: any[] };
+    const res = (await primary()) as { items?: any[] };
     return Array.isArray(res?.items) ? res.items : [];
-  } catch (err: any) {
-    console.warn('[Route Discovery] Failed to list Gateway API HTTPRoutes:', err?.message || err);
-    return [];
+  } catch {
+    try {
+      const fallbackRes = await k8sRequest<{ items?: any[] }>(fallbackPath);
+      return Array.isArray(fallbackRes?.items) ? fallbackRes.items : [];
+    } catch (err: any) {
+      const safeErr = String(err?.message || err).replace(/\n|\r/g, '');
+      console.warn(`[Route Discovery] Failed to list ${resourceName}: %s`, safeErr);
+      return [];
+    }
   }
 }
 
+async function fetchHttpRoutes(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
+  return fetchWithFallback(
+    () => client.customObjectsApi.listClusterCustomObject({
+      group: 'gateway.networking.k8s.io',
+      version: 'v1',
+      plural: 'httproutes',
+    }),
+    '/apis/gateway.networking.k8s.io/v1/httproutes',
+    'Gateway API HTTPRoutes'
+  );
+}
+
 async function fetchIngresses(client: ReturnType<typeof getK8sClient>): Promise<any[]> {
-  try {
-    const res = await client.networkingV1Api.listIngressForAllNamespaces();
-    return Array.isArray(res?.items) ? res.items : [];
-  } catch (err: any) {
-    console.warn('[Route Discovery] Failed to list Ingresses:', err?.message || err);
-    return [];
-  }
+  return fetchWithFallback(
+    () => client.networkingV1Api.listIngressForAllNamespaces(),
+    '/apis/networking.k8s.io/v1/ingresses',
+    'Ingresses'
+  );
 }
 
 // Discover HTTPRoutes and Ingresses from Kubernetes cluster
@@ -305,7 +321,8 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
     console.log(`[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster.`);
     return cachedRoutes;
   } catch (err: any) {
-    console.error('[Route Discovery] Error scanning cluster routes:', err);
+    const safeErr = String(err?.message || err).replace(/\n|\r/g, '');
+    console.error('[Route Discovery] Error scanning cluster routes: %s', safeErr);
     return cachedRoutes;
   }
 }
