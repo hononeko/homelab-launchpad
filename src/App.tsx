@@ -31,6 +31,8 @@ export default function App() {
   const [services, setServices] = useState<ServiceItem[]>(() => {
     try {
       localStorage.removeItem('kerrlab_services');
+      localStorage.removeItem('kerrlab_argo_apps');
+      localStorage.removeItem('kerrlab_discovered_routes');
     } catch {
       // Ignore storage errors in restricted contexts
     }
@@ -48,15 +50,8 @@ export default function App() {
     }
   });
 
-  const [argoApps, setArgoApps] = useState<ArgoApplication[]>(() => {
-    const saved = localStorage.getItem('kerrlab_argo_apps');
-    return saved ? JSON.parse(saved) : INITIAL_ARGO_APPS;
-  });
-
-  const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(() => {
-    const saved = localStorage.getItem('kerrlab_discovered_routes');
-    return saved ? JSON.parse(saved) : INITIAL_DISCOVERED_ROUTES;
-  });
+  const [argoApps, setArgoApps] = useState<ArgoApplication[]>(INITIAL_ARGO_APPS);
+  const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(INITIAL_DISCOVERED_ROUTES);
 
   const [argoEnabled, setArgoEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('kerrlab_argo_enabled');
@@ -219,14 +214,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('launchpad_services', JSON.stringify(services));
   }, [services]);
-
-  useEffect(() => {
-    localStorage.setItem('kerrlab_argo_apps', JSON.stringify(argoApps));
-  }, [argoApps]);
-
-  useEffect(() => {
-    localStorage.setItem('kerrlab_discovered_routes', JSON.stringify(discoveredRoutes));
-  }, [discoveredRoutes]);
 
   useEffect(() => {
     localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(argoEnabled));

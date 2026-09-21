@@ -203,11 +203,12 @@ export async function fetchClusterTelemetry(forceRefresh = false): Promise<Telem
     const kubeletVersion = firstNode?.status.nodeInfo.kubeletVersion || 'v1.31';
 
     const allReady = nodes.every((n) => n.status === 'Ready');
-    const statusText = !allReady
-      ? 'DEGRADED // NODE ATTENTION'
-      : runningPods / Math.max(1, totalPods) < 0.9
-        ? 'PODS RECONCILING'
-        : 'ALL SYSTEMS CALM';
+    let statusText = 'ALL SYSTEMS CALM';
+    if (!allReady) {
+      statusText = 'DEGRADED // NODE ATTENTION';
+    } else if (runningPods / Math.max(1, totalPods) < 0.9) {
+      statusText = 'PODS RECONCILING';
+    }
 
     const telemetry: ClusterTelemetry = {
       podsActive: runningPods,
