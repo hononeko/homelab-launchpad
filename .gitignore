@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Production build outputs
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files and secrets
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+
+# IDE, Editor & Agent Caching
+.antigravity/
+.vscode/
+.idea/
+.DS_Store
+
+# Test & coverage
+coverage/
