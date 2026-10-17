@@ -340,25 +340,26 @@ export default function App() {
     return () => clearInterval(timer);
   }, [probeUrlsKey, isAuthenticated]);
 
-  // Sync to localStorage
+  // Sync to localStorage; values are re-validated at the write so nothing
+  // unexpected is ever persisted
   useEffect(() => {
     localStorage.setItem('launchpad_services', JSON.stringify(services));
   }, [services]);
 
   useEffect(() => {
-    localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(argoEnabled));
+    localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(asBoolean(argoEnabled, true)));
   }, [argoEnabled]);
 
   useEffect(() => {
-    localStorage.setItem('kerrlab_autosync_routes', JSON.stringify(autoSyncRoutes));
+    localStorage.setItem('kerrlab_autosync_routes', JSON.stringify(asBoolean(autoSyncRoutes, false)));
   }, [autoSyncRoutes]);
 
   useEffect(() => {
-    localStorage.setItem('launchpad_hidden_categories', JSON.stringify(hiddenCategories));
+    localStorage.setItem('launchpad_hidden_categories', JSON.stringify(asCategories(hiddenCategories)));
   }, [hiddenCategories]);
 
   useEffect(() => {
-    localStorage.setItem('launchpad_default_tab', JSON.stringify(defaultTab));
+    localStorage.setItem('launchpad_default_tab', JSON.stringify(asTab(defaultTab)));
   }, [defaultTab]);
 
   // Global keydown handler for ⌘K and /
@@ -1157,7 +1158,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                 )
               }
               defaultTab={defaultTab}
-              onChangeDefaultTab={setDefaultTab}
+              onChangeDefaultTab={(tab) => setDefaultTab(asTab(tab))}
               syncState={syncState}
               persisted={persisted}
             />

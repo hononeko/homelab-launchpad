@@ -41,65 +41,61 @@ function isCategory(value: unknown): value is ServiceCategory {
   return CATEGORIES.has(value);
 }
 
+function matches(value: unknown, min: number, max: number, pattern: RegExp): boolean {
+  const str = text(value, min, max);
+  return str !== null && pattern.test(str);
+}
+
+function positiveInt(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
+}
+
+/** Name of the first invalid field, or null. Order matches the error messages tests expect. */
+function invalidServiceField(raw: Record<string, unknown>): string | null {
+  const url = text(raw.url, 1, 2048);
+  const checks: Array<[string, boolean]> = [
+    ['id', matches(raw.id, 1, 200, SERVICE_ID_PATTERN)],
+    ['name', text(raw.name, 1, 100) !== null],
+    ['url', url !== null && isHttpUrl(url)],
+    ['displayUrl', text(raw.displayUrl, 0, 255) !== null],
+    ['description', text(raw.description, 0, 500) !== null],
+    ['icon', matches(raw.icon, 1, 64, ICON_PATTERN)],
+    ['category', isCategory(raw.category)],
+    ['isPinned', typeof raw.isPinned === 'boolean'],
+    ['argoAppName', raw.argoAppName === undefined || matches(raw.argoAppName, 1, 253, ARGO_APP_PATTERN)],
+    ['discoveredFrom', raw.discoveredFrom === undefined || DISCOVERY_SOURCES.has(raw.discoveredFrom)],
+    ['custom', raw.custom === undefined || typeof raw.custom === 'boolean'],
+  ];
+  return checks.find(([, valid]) => !valid)?.[0] ?? null;
+}
+
 /**
  * Validates one service and keeps only its persisted fields. Runtime state
  * (probe status, latency) is reset; launch stats are only used to seed
- * counters the server does not have yet.
+ * counters the server does not have yet (first sync), so invalid ones are ignored.
  */
 function parseService(raw: unknown, index: number): ParseResult<ServiceItem> {
-  const fail = (field: string): ParseResult<ServiceItem> => ({ ok: false, error: `services[${index}].${field} is invalid` });
   if (!isRecord(raw)) return { ok: false, error: `services[${index}] must be an object` };
-
-  const id = text(raw.id, 1, 200);
-  if (!id || !SERVICE_ID_PATTERN.test(id)) return fail('id');
-  const name = text(raw.name, 1, 100);
-  if (!name) return fail('name');
-  const url = text(raw.url, 1, 2048);
-  if (!url || !isHttpUrl(url)) return fail('url');
-  const displayUrl = text(raw.displayUrl, 0, 255);
-  if (displayUrl === null) return fail('displayUrl');
-  const description = text(raw.description, 0, 500);
-  if (description === null) return fail('description');
-  const icon = text(raw.icon, 1, 64);
-  if (!icon || !ICON_PATTERN.test(icon)) return fail('icon');
-  if (!isCategory(raw.category)) return fail('category');
-  if (typeof raw.isPinned !== 'boolean') return fail('isPinned');
+  const invalid = invalidServiceField(raw);
+  if (invalid) return { ok: false, error: `services[${index}].${invalid} is invalid` };
 
   const service: ServiceItem = {
-    id,
-    name,
-    url,
-    displayUrl,
-    description,
-    icon,
-    category: raw.category,
-    isPinned: raw.isPinned,
-    launchesPerWeek: 0,
+    id: raw.id as string,
+    name: raw.name as string,
+    url: raw.url as string,
+    displayUrl: raw.displayUrl as string,
+    description: raw.description as string,
+    icon: raw.icon as string,
+    category: raw.category as ServiceCategory,
+    isPinned: raw.isPinned as boolean,
+    launchesPerWeek: positiveInt(raw.launchesPerWeek),
     lastAccessed: 'never',
-    lastAccessedTimestamp: 0,
+    lastAccessedTimestamp: positiveInt(raw.lastAccessedTimestamp),
     status: 'active',
   };
-
-  if (raw.argoAppName !== undefined) {
-    const argoAppName = text(raw.argoAppName, 1, 253);
-    if (!argoAppName || !ARGO_APP_PATTERN.test(argoAppName)) return fail('argoAppName');
-    service.argoAppName = argoAppName;
-  }
-  if (raw.discoveredFrom !== undefined) {
-    if (!DISCOVERY_SOURCES.has(raw.discoveredFrom)) return fail('discoveredFrom');
-    service.discoveredFrom = raw.discoveredFrom as ServiceItem['discoveredFrom'];
-  }
-  if (raw.custom !== undefined) {
-    if (typeof raw.custom !== 'boolean') return fail('custom');
-    service.custom = raw.custom;
-  }
-  // Seed values for counters the server has not recorded yet (first sync)
-  if (Number.isSafeInteger(raw.launchesPerWeek) && (raw.launchesPerWeek as number) > 0) {
-    service.launchesPerWeek = raw.launchesPerWeek as number;
-  }
-  if (Number.isSafeInteger(raw.lastAccessedTimestamp) && (raw.lastAccessedTimestamp as number) > 0) {
-    service.lastAccessedTimestamp = raw.lastAccessedTimestamp as number;
-  }
+  if (raw.argoAppName !== undefined) service.argoAppName = raw.argoAppName as string;
+  if (raw.discoveredFrom !== undefined) service.discoveredFrom = raw.discoveredFrom as ServiceItem['discoveredFrom'];
+  if (raw.custom !== undefined) service.custom = raw.custom as boolean;
   return { ok: true, value: service };
 }
 
