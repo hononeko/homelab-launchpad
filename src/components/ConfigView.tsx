@@ -59,7 +59,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
   const [gatewayClass, setGatewayClass] = useState('cilium-l7');
   const [savedNotice, setSavedNotice] = useState(false);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 2500);
