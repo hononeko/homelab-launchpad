@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ServiceItem } from '../types';
 
+// Best match plus up to seven related services
+const MAX_VISIBLE_RESULTS = 8;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
@@ -43,8 +50,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   });
 
   const bestMatch = filtered[0];
-  const relatedServices = filtered.slice(1, 8);
+  const relatedServices = filtered.slice(1, MAX_VISIBLE_RESULTS);
   const totalMatches = filtered.length;
+  // Keyboard selection only cycles through results that are actually rendered
+  const visibleCount = Math.max(1, Math.min(filtered.length, MAX_VISIBLE_RESULTS));
 
   // Keyboard navigation inside modal
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -53,10 +62,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       onClose();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev + 1) % Math.max(1, filtered.length));
+      setSelectedIndex((prev) => (prev + 1) % visibleCount);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedIndex((prev) => (prev - 1 + filtered.length) % Math.max(1, filtered.length));
+      setSelectedIndex((prev) => (prev - 1 + visibleCount) % visibleCount);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const target = filtered[selectedIndex] || bestMatch;
@@ -77,11 +86,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   // Helper to highlight matched query in string
   const renderHighlightedText = (text: string, highlight: string) => {
-    if (!highlight.trim()) return text;
-    const regex = new RegExp(`(${highlight.trim()})`, 'gi');
-    const parts = text.split(regex);
+    const needle = highlight.trim();
+    if (!needle) return text;
+    // Escape the query: characters like "(" or "+" would otherwise throw or misbehave
+    const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'gi'));
     return parts.map((part, index) =>
-      regex.test(part) ? (
+      part.toLowerCase() === needle.toLowerCase() ? (
         <span
           key={index}
           className="text-[#67df70] underline decoration-[#67df70]/40 decoration-2 underline-offset-4 font-semibold"
