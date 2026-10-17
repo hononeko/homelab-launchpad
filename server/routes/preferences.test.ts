@@ -1,8 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { apiRouter } from './api';
+import { createApp } from '../app';
 import { resetK8sClient } from '../k8s/client';
 import { MemoryPreferencesStore, PreferencesStore, setPreferencesStore } from '../preferences/store';
 
@@ -30,9 +29,8 @@ const jellyfin = {
 beforeAll(async () => {
   process.env.KUBECONFIG = '/dev/null';
   resetK8sClient();
-  const app = express();
-  app.use(express.json());
-  app.use('/api', apiRouter);
+  // The real app middleware, so body size limits are exercised too
+  const app = createApp({ distPath: null });
   server = await new Promise<Server>((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -92,6 +90,21 @@ describe('preferences API', () => {
     expect(loaded.preferences).toEqual(saved.preferences);
   });
 
+  test('accepts a full catalog larger than the default 100 kB body limit', async () => {
+    const services = Array.from({ length: 300 }, (_, i) => ({
+      ...jellyfin,
+      id: `imported-route-media-service-${i}`,
+      url: `https://service-${i}.example.com/a/reasonably/long/path/to/the/application/home`,
+      description: 'A self-hosted application discovered from the cluster gateway routes. '.repeat(3),
+    }));
+    const body = { services };
+    expect(JSON.stringify(body).length).toBeGreaterThan(100 * 1024);
+
+    const res = await putPrefs(ALICE, body);
+    expect(res.status).toBe(200);
+    expect((await res.json()).preferences.services).toHaveLength(300);
+  });
+
   test('rejects invalid payloads', async () => {
     const res = await putPrefs(ALICE, { services: [{ ...jellyfin, url: 'javascript:alert(1)' }] });
     expect(res.status).toBe(400);
@@ -108,16 +121,25 @@ describe('preferences API', () => {
     expect(loaded.preferences.services[0].launchesPerWeek).toBe(2);
     expect(loaded.preferences.services[0].lastAccessed).toMatch(/s ago$/);
 
-    // Bob's profile is separate
+    // Bob's profile is separate: without his own catalog, nothing is counted
     expect((await (await getPrefs(BOB)).json()).preferences).toBeNull();
-    expect((await (await launch(BOB, jellyfin.id)).json()).count).toBe(1);
+    expect((await launch(BOB, jellyfin.id)).status).toBe(404);
+  });
+
+  test('only counts launches of services in the saved catalog', async () => {
+    expect((await launch(ALICE, jellyfin.id)).status).toBe(404);
+    await putPrefs(ALICE, { services: [jellyfin] });
+    expect((await launch(ALICE, 'not-in-catalog')).status).toBe(404);
+    expect((await launch(ALICE, jellyfin.id)).status).toBe(200);
   });
 
   test('validates launch ids and reports the counter cap', async () => {
     expect((await launch(ALICE, 'bad id')).status).toBe(400);
 
     setPreferencesStore(new MemoryPreferencesStore(1));
-    await launch(ALICE, 'first');
+    const second = { ...jellyfin, id: 'second', launchesPerWeek: 0, lastAccessedTimestamp: 0 };
+    await putPrefs(ALICE, { services: [{ ...jellyfin, launchesPerWeek: 0, lastAccessedTimestamp: 0 }, second] });
+    await launch(ALICE, jellyfin.id);
     expect((await launch(ALICE, 'second')).status).toBe(409);
   });
 

@@ -12,7 +12,10 @@ export const MAX_LAUNCH_COUNTERS = 1000;
 export interface PreferencesStore {
   readonly kind: 'valkey' | 'memory';
   load(user: string): Promise<StoredPreferences | null>;
-  /** Saves preferences and seeds launch stats only for services without counters. */
+  /**
+   * Saves preferences, drops counters for services no longer in the catalog,
+   * and seeds launch stats only for services without counters.
+   */
   save(user: string, prefs: StoredPreferences): Promise<void>;
   /** Atomically increments a launch counter; null when the per-user cap is reached. */
   recordLaunch(user: string, serviceId: string, at: number): Promise<LaunchStats | null>;
@@ -22,7 +25,7 @@ export interface PreferencesStore {
 
 function seedsFor(prefs: StoredPreferences): Array<[string, number, number]> {
   return prefs.services
-    .filter((s) => s.launchesPerWeek > 0)
+    .filter((s) => s.launchesPerWeek > 0 || s.lastAccessedTimestamp > 0)
     .map((s) => [s.id, s.launchesPerWeek, s.lastAccessedTimestamp]);
 }
 
@@ -43,35 +46,43 @@ export class MemoryPreferencesStore implements PreferencesStore {
     return userStats;
   }
 
-  async load(user: string): Promise<StoredPreferences | null> {
+  load(user: string): Promise<StoredPreferences | null> {
     const prefs = this.prefs.get(user);
-    return prefs ? structuredClone(prefs) : null;
+    return Promise.resolve(prefs ? structuredClone(prefs) : null);
   }
 
-  async save(user: string, prefs: StoredPreferences): Promise<void> {
+  save(user: string, prefs: StoredPreferences): Promise<void> {
     this.prefs.set(user, structuredClone(prefs));
     const userStats = this.statsFor(user);
+    // Counters for services no longer in the catalog are dropped
+    const ids = new Set(prefs.services.map((s) => s.id));
+    for (const id of userStats.keys()) {
+      if (!ids.has(id)) userStats.delete(id);
+    }
     for (const [id, count, lastLaunchedAt] of seedsFor(prefs)) {
       if (!userStats.has(id) && userStats.size < this.maxLaunchCounters) {
         userStats.set(id, { count, lastLaunchedAt });
       }
     }
+    return Promise.resolve();
   }
 
-  async recordLaunch(user: string, serviceId: string, at: number): Promise<LaunchStats | null> {
+  recordLaunch(user: string, serviceId: string, at: number): Promise<LaunchStats | null> {
     const userStats = this.statsFor(user);
     const current = userStats.get(serviceId);
-    if (!current && userStats.size >= this.maxLaunchCounters) return null;
+    if (!current && userStats.size >= this.maxLaunchCounters) return Promise.resolve(null);
     const next = { count: (current?.count ?? 0) + 1, lastLaunchedAt: at };
     userStats.set(serviceId, next);
-    return next;
+    return Promise.resolve(next);
   }
 
-  async launchStats(user: string): Promise<Record<string, LaunchStats>> {
-    return Object.fromEntries(this.stats.get(user) ?? []);
+  launchStats(user: string): Promise<Record<string, LaunchStats>> {
+    return Promise.resolve(Object.fromEntries(this.stats.get(user) ?? []));
   }
 
-  close(): void {}
+  close(): void {
+    // Nothing to release: data lives in this process only
+  }
 }
 
 // KEYS: counts hash, last-launch hash. ARGV: service id, timestamp, counter cap.
@@ -84,11 +95,23 @@ redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
 return count
 `;
 
-// KEYS: prefs, counts hash, last-launch hash. ARGV: prefs JSON, counter cap, then (id, count, last) triples.
+// KEYS: prefs, counts hash, last-launch hash.
+// ARGV: prefs JSON, counter cap, catalog size N, N service ids, then (id, count, last) seed triples.
 const SAVE_SCRIPT = `
 redis.call('SET', KEYS[1], ARGV[1])
 local cap = tonumber(ARGV[2])
-for i = 3, #ARGV, 3 do
+local idCount = tonumber(ARGV[3])
+local catalog = {}
+for i = 4, 3 + idCount do
+  catalog[ARGV[i]] = true
+end
+for _, id in ipairs(redis.call('HKEYS', KEYS[2])) do
+  if not catalog[id] then
+    redis.call('HDEL', KEYS[2], id)
+    redis.call('HDEL', KEYS[3], id)
+  end
+end
+for i = 4 + idCount, #ARGV, 3 do
   if redis.call('HEXISTS', KEYS[2], ARGV[i]) == 0 and redis.call('HLEN', KEYS[2]) < cap then
     redis.call('HSET', KEYS[2], ARGV[i], ARGV[i + 1])
     redis.call('HSET', KEYS[3], ARGV[i], ARGV[i + 2])
@@ -116,12 +139,14 @@ export class ValkeyPreferencesStore implements PreferencesStore {
     });
   }
 
+  // The {user} hash tag keeps a user's keys in one slot, so the multi-key
+  // scripts also work on clustered Valkey
   private keys(user: string) {
     const id = encodeURIComponent(user);
     return {
-      prefs: `launchpad:v1:prefs:${id}`,
-      counts: `launchpad:v1:launches:${id}`,
-      lastLaunch: `launchpad:v1:last-launch:${id}`,
+      prefs: `launchpad:v1:{${id}}:prefs`,
+      counts: `launchpad:v1:{${id}}:launches`,
+      lastLaunch: `launchpad:v1:{${id}}:last-launch`,
     };
   }
 
@@ -145,6 +170,7 @@ export class ValkeyPreferencesStore implements PreferencesStore {
 
   async save(user: string, prefs: StoredPreferences): Promise<void> {
     const keys = this.keys(user);
+    const ids = prefs.services.map((s) => s.id);
     const seeds = seedsFor(prefs).flatMap(([id, count, last]) => [id, String(count), String(last)]);
     await this.send('EVAL', [
       SAVE_SCRIPT,
@@ -154,6 +180,8 @@ export class ValkeyPreferencesStore implements PreferencesStore {
       keys.lastLaunch,
       JSON.stringify(prefs),
       String(this.maxLaunchCounters),
+      String(ids.length),
+      ...ids,
       ...seeds,
     ]);
   }

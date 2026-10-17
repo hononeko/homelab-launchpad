@@ -3,6 +3,7 @@ import { getRequestUser } from '../auth/forwardAuth';
 import { formatRelativeTime } from '../k8s/argo';
 import { getPreferencesStore } from '../preferences/store';
 import { parsePreferences, SERVICE_ID_PATTERN } from '../preferences/validate';
+import { errorMessage } from '../util/errorMessage';
 import { AuthUser, LaunchStats, UserPreferences } from '../../src/types';
 
 // Mounted on the API router after authentication; every route acts on the signed-in user
@@ -24,8 +25,7 @@ function withStats(prefs: Omit<UserPreferences, 'updatedAt'> & { updatedAt: stri
 }
 
 function storeUnavailable(res: Response, action: string, error: unknown) {
-  const safeErr = String((error as Error)?.message || error).replace(/[\n\r]/g, '');
-  console.error('[Preferences] Failed to %s: %s', action, safeErr);
+  console.error('[Preferences] Failed to %s: %s', action, errorMessage(error));
   res.status(503).json({ success: false, error: 'Preferences store unavailable' });
 }
 
@@ -72,8 +72,16 @@ preferencesRouter.post('/services/:id/launch', async (req: Request, res: Respons
   }
 
   const user = getRequestUser(res) as AuthUser;
+  const store = getPreferencesStore();
   try {
-    const stats = await getPreferencesStore().recordLaunch(user.username, id, Date.now());
+    // Only services in the user's saved catalog are counted, so arbitrary ids
+    // cannot fill the per-user counter cap
+    const prefs = await store.load(user.username);
+    if (!prefs?.services.some((s) => s.id === id)) {
+      res.status(404).json({ success: false, error: 'Service not in your saved launchpad' });
+      return;
+    }
+    const stats = await store.recordLaunch(user.username, id, Date.now());
     if (!stats) {
       res.status(409).json({ success: false, error: 'Launch counter limit reached' });
       return;

@@ -113,8 +113,25 @@ describe.each(implementations)('%s store', (_name, create, skip) => {
     // Existing counters still increment at the cap
     expect((await store.recordLaunch(alice, 'a', 2))?.count).toBe(2);
 
-    await store.save(alice, prefs([service('d', { launchesPerWeek: 3 })]));
+    await store.save(alice, prefs([service('a'), service('b'), service('d', { launchesPerWeek: 3 })]));
     expect(Object.keys(await store.launchStats(alice)).sort()).toEqual(['a', 'b']);
+  });
+
+  test.skipIf(skip)('saving drops counters for services removed from the catalog', async () => {
+    const store = make();
+    const alice = user();
+    await store.recordLaunch(alice, 'kept', 1);
+    await store.recordLaunch(alice, 'removed', 2);
+    await store.save(alice, prefs([service('kept')]));
+
+    expect(await store.launchStats(alice)).toEqual({ kept: { count: 1, lastLaunchedAt: 1 } });
+  });
+
+  test.skipIf(skip)('seeds a last-launch time even without a launch count', async () => {
+    const store = make();
+    const alice = user();
+    await store.save(alice, prefs([service('a', { lastAccessedTimestamp: 1234 })]));
+    expect(await store.launchStats(alice)).toEqual({ a: { count: 0, lastLaunchedAt: 1234 } });
   });
 });
 

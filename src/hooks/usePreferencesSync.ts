@@ -77,6 +77,20 @@ export function usePreferencesSync({ enabled, settings, apply }: Options) {
   settingsRef.current = settings;
 
   const payload = useMemo(() => JSON.stringify(toPayload(settings)), [settings]);
+  const payloadRef = useRef(payload);
+  payloadRef.current = payload;
+
+  // Saves are sent one at a time, in order, so a slow request can never land
+  // after a newer one and overwrite it
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const save = useCallback((body: string) => {
+    saveQueue.current = saveQueue.current.then(async () => {
+      setSyncState('saving');
+      const ok = await putPreferences(JSON.parse(body));
+      if (ok) lastSynced.current = body;
+      setSyncState(ok ? 'synced' : 'error');
+    });
+  }, []);
 
   useEffect(() => {
     hydrated.current = false;
@@ -87,8 +101,10 @@ export function usePreferencesSync({ enabled, settings, apply }: Options) {
     }
 
     let cancelled = false;
+    const payloadAtStart = payloadRef.current;
     setSyncState('loading');
-    (async () => {
+    // Errors are handled inside; the promise itself is intentionally not awaited
+    void (async () => {
       try {
         const res = await fetch('/api/user/preferences');
         const data = res.ok ? await res.json() : null;
@@ -98,6 +114,15 @@ export function usePreferencesSync({ enabled, settings, apply }: Options) {
           return;
         }
         setPersisted(Boolean(data.persisted));
+
+        if (data.preferences && payloadRef.current !== payloadAtStart) {
+          // The user changed something while the profile was loading: their
+          // edit wins and is saved (last write wins, like every other save)
+          hydrated.current = true;
+          setSyncState('synced');
+          save(payloadRef.current);
+          return;
+        }
 
         if (data.preferences) {
           const prefs = data.preferences as UserPreferences;
@@ -115,6 +140,8 @@ export function usePreferencesSync({ enabled, settings, apply }: Options) {
         hydrated.current = true;
         if (ok) lastSynced.current = JSON.stringify(toPayload(local));
         setSyncState(ok ? 'synced' : 'error');
+        // Edits made during the upload were skipped by the save effect; send them now
+        if (payloadRef.current !== lastSynced.current) save(payloadRef.current);
       } catch {
         if (!cancelled) setSyncState('offline');
       }
@@ -123,18 +150,14 @@ export function usePreferencesSync({ enabled, settings, apply }: Options) {
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, save]);
 
   useEffect(() => {
     if (!enabled || !hydrated.current || payload === lastSynced.current) return;
     setSyncState('saving');
-    const timer = setTimeout(async () => {
-      const ok = await putPreferences(JSON.parse(payload));
-      if (ok) lastSynced.current = payload;
-      setSyncState(ok ? 'synced' : 'error');
-    }, SAVE_DEBOUNCE_MS);
+    const timer = setTimeout(() => save(payload), SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [enabled, payload]);
+  }, [enabled, payload, save]);
 
   const recordLaunch = useCallback(
     async (serviceId: string): Promise<LaunchStats | null> => {

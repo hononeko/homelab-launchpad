@@ -66,6 +66,8 @@ interface ApiReply {
   body?: unknown;
   // Simulates a network failure
   fail?: boolean;
+  // Delays the response; may differ per HTTP method
+  delayMs?: number | Partial<Record<string, number>>;
 }
 
 function installApi(authSession: AuthSession, overrides: Record<string, ApiReply> = {}) {
@@ -74,6 +76,9 @@ function installApi(authSession: AuthSession, overrides: Record<string, ApiReply
     const url = String(input);
     requests.push({ url, init });
     const override = overrides[url];
+    const delay =
+      typeof override?.delayMs === 'number' ? override.delayMs : override?.delayMs?.[init?.method ?? 'GET'];
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (override?.fail) throw new TypeError('Failed to fetch');
     let body: unknown = override?.body ?? { success: true };
     if (!override && url === '/api/auth/me') body = { success: true, ...authSession };
@@ -380,8 +385,10 @@ describe('App preference sync', () => {
     );
     render(<App />);
 
-    expect(await screen.findByText('Jellyfin')).toBeDefined();
-    expect(screen.queryByText('Mealie')).toBeNull();
+    // Local state (which includes Mealie) renders first; wait for the profile to apply
+    await waitFor(() => expect(requested('/api/user/preferences')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Mealie')).toBeNull());
+    expect(screen.getByText('Jellyfin')).toBeDefined();
   });
 
   test('the first sync uploads local services with their launch counts', async () => {
@@ -425,5 +432,61 @@ describe('App preference sync', () => {
     await screen.findByText('Sign in to view services');
     await settle();
     expect(requested('/api/user/preferences')).toBe(false);
+  });
+
+  test('switching tabs does not change the synced default tab', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click(screen.getByText('Most Frequent'));
+    await settle();
+    expect(puts()).toHaveLength(1);
+  });
+
+  test('changing the default tab in Config saves it', async () => {
+    installApi(session('admin'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click(screen.getByLabelText('Settings and Preferences'));
+    fireEvent.change(await screen.findByLabelText('Default Tab'), { target: { value: 'all' } });
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 2000 });
+    expect(JSON.parse(String(puts()[1].init!.body)).defaultTab).toBe('all');
+  });
+
+  test('an edit made while the profile is loading wins over the loaded profile', async () => {
+    installApi(session('viewer'), {
+      ...serverPrefs({ services: SERVICES }),
+      '/api/user/preferences': {
+        ...serverPrefs({ services: SERVICES })['/api/user/preferences'],
+        delayMs: { GET: 400 },
+      },
+    });
+    render(<App />);
+
+    // Local state renders immediately; unpin before the profile arrives
+    fireEvent.click((await screen.findAllByTitle('Unpin service'))[0]);
+    await waitFor(() => expect(puts()).toHaveLength(1), { timeout: 2000 });
+
+    const body = JSON.parse(String(puts()[0].init!.body));
+    expect(body.services[0]).toMatchObject({ id: 'imported-jellyfin', isPinned: false });
+    // The loaded profile (still pinned) did not overwrite the local edit
+    await settle();
+    expect(JSON.parse(localStorage.getItem('launchpad_services')!)[0].isPinned).toBe(false);
+  });
+
+  test('saves are sent one at a time, in order', async () => {
+    installApi(session('viewer'), { '/api/user/preferences': { delayMs: { PUT: 900 } } });
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    // An edit made while the first upload is in flight is saved after it, not lost
+    fireEvent.click(screen.getAllByTitle('Unpin service')[0]);
+    await settle();
+    expect(puts()).toHaveLength(1);
+
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 3000 });
+    expect(JSON.parse(String(puts()[1].init!.body)).services[0].isPinned).toBe(false);
   });
 });

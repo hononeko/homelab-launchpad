@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
-import { SERVICE_CATEGORIES, ServiceCategory } from '../types';
+import { SERVICE_CATEGORIES, ServiceCategory, TabFilter } from '../types';
 import { SyncState } from '../hooks/usePreferencesSync';
+
+const TAB_LABELS: Record<TabFilter, string> = {
+  pinned: 'Pinned & Recent',
+  frequent: 'Most Frequent',
+  all: 'All Services',
+};
 
 const SYNC_DESCRIPTIONS: Record<SyncState, string> = {
   local: 'Saved in this browser only',
@@ -21,6 +27,8 @@ interface ConfigViewProps {
   totalRoutesCount: number;
   hiddenCategories: ServiceCategory[];
   onToggleCategory: (category: ServiceCategory) => void;
+  defaultTab: TabFilter;
+  onChangeDefaultTab: (tab: TabFilter) => void;
   syncState: SyncState;
   // Whether the server persists preferences (Valkey) or only keeps them in memory
   persisted: boolean;
@@ -36,6 +44,8 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
   totalRoutesCount,
   hiddenCategories,
   onToggleCategory,
+  defaultTab,
+  onChangeDefaultTab,
   syncState,
   persisted,
 }) => {
@@ -189,6 +199,26 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
               />
             </div>
           </div>
+        </div>
+
+        {/* Layout */}
+        <div className="bg-[#0E1117] border border-[#1C212B] rounded-2xl p-6 shadow-sm flex flex-col gap-3">
+          <label htmlFor="default-tab" className="font-mono text-xs text-white font-medium">
+            Default Tab
+          </label>
+          <select
+            id="default-tab"
+            value={defaultTab}
+            onChange={(e) => onChangeDefaultTab(e.target.value as TabFilter)}
+            className="w-full bg-[#151921] border border-[#283141] rounded-xl px-3.5 py-2 font-mono text-xs text-white focus:border-[#67df70] focus:outline-none"
+          >
+            {(Object.keys(TAB_LABELS) as TabFilter[]).map((tab) => (
+              <option key={tab} value={tab}>
+                {TAB_LABELS[tab]}
+              </option>
+            ))}
+          </select>
+          <span className="font-mono text-[10px] text-[#64748B]">The overview opens on this tab on every synced device</span>
         </div>
 
         {/* Category Visibility */}

@@ -120,6 +120,8 @@ export interface AuthSession {
 
 export type TabFilter = 'pinned' | 'frequent' | 'all';
 
+export const TAB_FILTERS: readonly TabFilter[] = ['pinned', 'frequent', 'all'];
+
 export type ServiceCategory = ServiceItem['category'];
 
 export const SERVICE_CATEGORIES: readonly ServiceCategory[] = ['MEDIA', 'HOME & LIVING', 'TOOLS & DEV', 'CLUSTER & OPS'];

@@ -9,6 +9,7 @@ function renderConfig(props: Partial<ComponentProps<typeof ConfigView>> = {}) {
     onToggleAutoSyncRoutes: mock(),
     onResetToDefaults: mock(),
     onToggleCategory: mock(),
+    onChangeDefaultTab: mock(),
   };
   const { container } = render(
     <ConfigView
@@ -17,6 +18,7 @@ function renderConfig(props: Partial<ComponentProps<typeof ConfigView>> = {}) {
       totalServicesCount={12}
       totalRoutesCount={7}
       hiddenCategories={['CLUSTER & OPS']}
+      defaultTab="pinned"
       syncState="synced"
       persisted
       {...handlers}
@@ -42,6 +44,14 @@ describe('ConfigView', () => {
 
     fireEvent.click(screen.getByText('Reset Services'));
     expect(onResetToDefaults).toHaveBeenCalledTimes(1);
+  });
+
+  test('the default tab select reports the chosen tab', () => {
+    const { onChangeDefaultTab } = renderConfig();
+    const select = screen.getByLabelText('Default Tab') as HTMLSelectElement;
+    expect(select.value).toBe('pinned');
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(onChangeDefaultTab).toHaveBeenCalledWith('all');
   });
 
   test('category buttons show visibility and toggle categories', () => {

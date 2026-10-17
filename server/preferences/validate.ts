@@ -1,11 +1,12 @@
-import { SERVICE_CATEGORIES, ServiceCategory, ServiceItem, TabFilter, UserPreferences } from '../../src/types';
+import { SERVICE_CATEGORIES, ServiceCategory, ServiceItem, TAB_FILTERS, TabFilter, UserPreferences } from '../../src/types';
 
 export const MAX_SERVICES = 300;
 export const SERVICE_ID_PATTERN = /^[\w.:-]{1,200}$/;
 const ICON_PATTERN = /^[a-z0-9_]{1,64}$/;
 const ARGO_APP_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-const TABS: readonly TabFilter[] = ['pinned', 'frequent', 'all'];
-const DISCOVERY_SOURCES: readonly NonNullable<ServiceItem['discoveredFrom']>[] = ['httproute', 'ingress', 'manual'];
+const TABS = new Set<unknown>(TAB_FILTERS);
+const CATEGORIES = new Set<unknown>(SERVICE_CATEGORIES);
+const DISCOVERY_SOURCES = new Set<unknown>(['httproute', 'ingress', 'manual']);
 
 export type PreferencesInput = Omit<UserPreferences, 'updatedAt'>;
 
@@ -37,7 +38,7 @@ function isHttpUrl(value: string): boolean {
 }
 
 function isCategory(value: unknown): value is ServiceCategory {
-  return SERVICE_CATEGORIES.includes(value as ServiceCategory);
+  return CATEGORIES.has(value);
 }
 
 /**
@@ -85,7 +86,7 @@ function parseService(raw: unknown, index: number): ParseResult<ServiceItem> {
     service.argoAppName = argoAppName;
   }
   if (raw.discoveredFrom !== undefined) {
-    if (!DISCOVERY_SOURCES.includes(raw.discoveredFrom as never)) return fail('discoveredFrom');
+    if (!DISCOVERY_SOURCES.has(raw.discoveredFrom)) return fail('discoveredFrom');
     service.discoveredFrom = raw.discoveredFrom as ServiceItem['discoveredFrom'];
   }
   if (raw.custom !== undefined) {
@@ -102,42 +103,52 @@ function parseService(raw: unknown, index: number): ParseResult<ServiceItem> {
   return { ok: true, value: service };
 }
 
-export function parsePreferences(body: unknown): ParseResult<PreferencesInput> {
-  if (!isRecord(body)) return { ok: false, error: 'Expected a JSON object' };
-
-  if (!Array.isArray(body.services) || body.services.length > MAX_SERVICES) {
+function parseServices(raw: unknown): ParseResult<ServiceItem[]> {
+  if (!Array.isArray(raw) || raw.length > MAX_SERVICES) {
     return { ok: false, error: `"services" must be an array with at most ${MAX_SERVICES} entries` };
   }
   const services: ServiceItem[] = [];
   const seen = new Set<string>();
-  for (const [index, raw] of body.services.entries()) {
-    const parsed = parseService(raw, index);
+  for (const [index, item] of raw.entries()) {
+    const parsed = parseService(item, index);
     if (parsed.ok === false) return { ok: false, error: parsed.error };
     if (seen.has(parsed.value.id)) return { ok: false, error: `services[${index}].id is duplicated` };
     seen.add(parsed.value.id);
     services.push(parsed.value);
   }
+  return { ok: true, value: services };
+}
 
+type Settings = Omit<PreferencesInput, 'services'>;
+
+function parseSettings(body: Record<string, unknown>): ParseResult<Settings> {
   const hidden = body.hiddenCategories ?? [];
   if (!Array.isArray(hidden) || !hidden.every(isCategory)) {
     return { ok: false, error: '"hiddenCategories" must list known categories' };
   }
   const defaultTab = body.defaultTab ?? DEFAULT_PREFERENCES.defaultTab;
-  if (!TABS.includes(defaultTab as TabFilter)) return { ok: false, error: '"defaultTab" is invalid' };
+  if (!TABS.has(defaultTab)) return { ok: false, error: '"defaultTab" is invalid' };
   const argoEnabled = body.argoEnabled ?? DEFAULT_PREFERENCES.argoEnabled;
   const autoSyncRoutes = body.autoSyncRoutes ?? DEFAULT_PREFERENCES.autoSyncRoutes;
   if (typeof argoEnabled !== 'boolean' || typeof autoSyncRoutes !== 'boolean') {
     return { ok: false, error: '"argoEnabled" and "autoSyncRoutes" must be booleans' };
   }
-
   return {
     ok: true,
     value: {
-      services,
-      hiddenCategories: [...new Set(hidden as ServiceCategory[])],
+      hiddenCategories: [...new Set(hidden)],
       defaultTab: defaultTab as TabFilter,
       argoEnabled,
       autoSyncRoutes,
     },
   };
+}
+
+export function parsePreferences(body: unknown): ParseResult<PreferencesInput> {
+  if (!isRecord(body)) return { ok: false, error: 'Expected a JSON object' };
+  const services = parseServices(body.services);
+  if (services.ok === false) return services;
+  const settings = parseSettings(body);
+  if (settings.ok === false) return settings;
+  return { ok: true, value: { services: services.value, ...settings.value } };
 }

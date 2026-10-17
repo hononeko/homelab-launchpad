@@ -71,11 +71,12 @@ export function createApp({ rateLimitMax = 1000, distPath = defaultDistPath() }:
           callback(null, false);
         }
       },
-      methods: ['GET', 'POST'],
+      methods: ['GET', 'POST', 'PUT'],
     })
   );
 
-  app.use(express.json());
+  // Large enough for a full preferences catalog (up to 300 services)
+  app.use(express.json({ limit: '1mb' }));
 
   // Request logging with sanitized path to prevent log injection
   app.use((req, res, next) => {
