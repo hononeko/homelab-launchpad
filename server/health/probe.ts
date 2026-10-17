@@ -202,7 +202,9 @@ export async function probeUrl(url: URL, config: ProbeConfig = getProbeConfig())
 
 interface ProbeTarget {
   url: URL;
-  lastRegisteredAt: number;
+  // Registrant (username) -> last time they registered this URL. Results are
+  // only visible to registrants, so users cannot enumerate each other's services.
+  registrants: Map<string, number>;
 }
 
 // Keyed by the exact URL string the client registered, so clients can look up
@@ -213,7 +215,7 @@ let lastProbedAt: string | null = null;
 let lastRoundStartedMs = 0;
 let roundInFlight: Promise<void> | null = null;
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
-let onRoundComplete: ((snapshot: HealthSnapshot) => void) | null = null;
+let onRoundComplete: (() => void) | null = null;
 
 export interface HealthSnapshot {
   results: Record<string, ServiceHealth>;
@@ -222,12 +224,24 @@ export interface HealthSnapshot {
   targetCount: number;
 }
 
-export function getHealthSnapshot(): HealthSnapshot {
+/**
+ * Returns probe results. With a registrant, only the targets that registrant
+ * registered are included; without one (administrators), all targets are.
+ */
+export function getHealthSnapshot(registrant?: string): HealthSnapshot {
+  const visibleKeys = [...targets.entries()]
+    .filter(([, target]) => registrant === undefined || target.registrants.has(registrant))
+    .map(([key]) => key);
+  const visibleResults: Record<string, ServiceHealth> = {};
+  for (const key of visibleKeys) {
+    const result = results.get(key);
+    if (result) visibleResults[key] = result;
+  }
   return {
-    results: Object.fromEntries(results),
+    results: visibleResults,
     lastProbedAt,
     intervalMs: getProbeConfig().intervalMs,
-    targetCount: targets.size,
+    targetCount: visibleKeys.length,
   };
 }
 
@@ -236,7 +250,7 @@ export interface RegisterResult {
   rejected: string[];
 }
 
-export function registerTargets(rawUrls: unknown[]): RegisterResult {
+export function registerTargets(rawUrls: unknown[], registrant: string): RegisterResult {
   const { allowedDomains } = getProbeConfig();
   const now = Date.now();
   const accepted: string[] = [];
@@ -251,9 +265,9 @@ export function registerTargets(rawUrls: unknown[]): RegisterResult {
     const key = raw as string;
     const existing = targets.get(key);
     if (existing) {
-      existing.lastRegisteredAt = now;
+      existing.registrants.set(registrant, now);
     } else if (targets.size < MAX_TARGETS) {
-      targets.set(key, { url: parsed, lastRegisteredAt: now });
+      targets.set(key, { url: parsed, registrants: new Map([[registrant, now]]) });
     } else {
       rejected.push(key.slice(0, 256));
       continue;
@@ -266,7 +280,10 @@ export function registerTargets(rawUrls: unknown[]): RegisterResult {
 
 function pruneExpiredTargets(now: number) {
   for (const [key, target] of targets) {
-    if (now - target.lastRegisteredAt > TARGET_TTL_MS) {
+    for (const [registrant, registeredAt] of target.registrants) {
+      if (now - registeredAt > TARGET_TTL_MS) target.registrants.delete(registrant);
+    }
+    if (target.registrants.size === 0) {
       targets.delete(key);
       results.delete(key);
     }
@@ -302,7 +319,7 @@ async function executeRound(keys?: string[]): Promise<void> {
   });
 
   lastProbedAt = new Date().toISOString();
-  onRoundComplete?.(getHealthSnapshot());
+  onRoundComplete?.();
 }
 
 /**
@@ -329,7 +346,7 @@ export async function requestProbeRound(): Promise<{ throttled: boolean }> {
   return { throttled: false };
 }
 
-export function startHealthProbeScheduler(onComplete: (snapshot: HealthSnapshot) => void): void {
+export function startHealthProbeScheduler(onComplete: () => void): void {
   if (schedulerTimer) return;
   onRoundComplete = onComplete;
   const { intervalMs } = getProbeConfig();

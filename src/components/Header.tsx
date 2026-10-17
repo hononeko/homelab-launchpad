@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { MainView } from '../types';
+import { AuthSession, AuthUser, MainView } from '../types';
 
 interface HeaderProps {
   currentView: MainView;
   onViewChange: (view: MainView) => void;
+  session: AuthSession | null;
   onOpenSearch: () => void;
   onOpenAutoDiscovery: () => void;
   onOpenClusterModal: () => void;
@@ -11,9 +12,25 @@ interface HeaderProps {
   argoSyncHealth: 'Synced' | 'OutOfSync' | 'Syncing';
 }
 
+function getInitials(user: AuthUser): string {
+  const source = user.name || user.username;
+  const parts = source.split(/[\s._@-]+/).filter(Boolean);
+  const initials = parts.length > 1 ? parts[0][0] + parts[1][0] : source.slice(0, 2);
+  return initials.toUpperCase();
+}
+
+function describeUser(user: AuthUser): string {
+  const lines = [user.name ? `${user.name} (${user.username})` : user.username];
+  if (user.email) lines.push(user.email);
+  lines.push(`Role: ${user.role}`);
+  if (user.groups.length > 0) lines.push(`Groups: ${user.groups.join(', ')}`);
+  return lines.join('\n');
+}
+
 export const Header: React.FC<HeaderProps> = ({
   currentView,
   onViewChange,
+  session,
   onOpenSearch,
   onOpenAutoDiscovery,
   onOpenClusterModal,
@@ -21,6 +38,9 @@ export const Header: React.FC<HeaderProps> = ({
   argoSyncHealth,
 }) => {
   const [currentTime, setCurrentTime] = useState('');
+  const isAdmin = session?.user?.role === 'admin';
+  // Show a profile only for real SSO identities, not the anonymous admin of AUTH_MODE=none
+  const ssoUser = session?.mode === 'forward-auth' ? session.user : null;
 
   useEffect(() => {
     const updateTime = () => {
@@ -87,37 +107,41 @@ export const Header: React.FC<HeaderProps> = ({
             >
               Services
             </button>
-            <button
-              onClick={() => onViewChange('gitops')}
-              className={`px-3 py-1.5 rounded-md text-[13px] font-medium transition-all flex items-center gap-1.5 ${
-                currentView === 'gitops'
-                  ? 'text-[#67df70] bg-[#67df70]/10 font-medium'
-                  : 'text-[#94A3B8] hover:text-white hover:bg-[#151921]'
-              }`}
-            >
-              <span>GitOps</span>
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  argoSyncHealth === 'Synced'
-                    ? 'bg-[#67df70]'
-                    : argoSyncHealth === 'Syncing'
-                    ? 'bg-amber-400 animate-pulse'
-                    : 'bg-rose-400'
-                }`}
-              ></span>
-            </button>
-            <button
-              onClick={onOpenAutoDiscovery}
-              className="px-3 py-1.5 rounded-md text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-[#151921] transition-all flex items-center gap-1.5"
-              title="Auto-discover Kubernetes HTTPRoutes"
-            >
-              <span>HTTP Routes</span>
-              {pendingRoutesCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-[#67df70]/20 text-[#67df70] font-mono text-[10px] font-semibold">
-                  +{pendingRoutesCount}
-                </span>
-              )}
-            </button>
+            {isAdmin && (
+              <>
+                <button
+                  onClick={() => onViewChange('gitops')}
+                  className={`px-3 py-1.5 rounded-md text-[13px] font-medium transition-all flex items-center gap-1.5 ${
+                    currentView === 'gitops'
+                      ? 'text-[#67df70] bg-[#67df70]/10 font-medium'
+                      : 'text-[#94A3B8] hover:text-white hover:bg-[#151921]'
+                  }`}
+                >
+                  <span>GitOps</span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      argoSyncHealth === 'Synced'
+                        ? 'bg-[#67df70]'
+                        : argoSyncHealth === 'Syncing'
+                        ? 'bg-amber-400 animate-pulse'
+                        : 'bg-rose-400'
+                    }`}
+                  ></span>
+                </button>
+                <button
+                  onClick={onOpenAutoDiscovery}
+                  className="px-3 py-1.5 rounded-md text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-[#151921] transition-all flex items-center gap-1.5"
+                  title="Auto-discover Kubernetes HTTPRoutes"
+                >
+                  <span>HTTP Routes</span>
+                  {pendingRoutesCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-[#67df70]/20 text-[#67df70] font-mono text-[10px] font-semibold">
+                      +{pendingRoutesCount}
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
           </nav>
         </div>
 
@@ -158,28 +182,70 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Talos Nodes Pill */}
-          <button
-            onClick={onOpenClusterModal}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0E1117] hover:bg-[#151921] border border-[#1C212B] hover:border-[#67df70]/40 transition-colors"
-            title="View Cluster Nodes & Pod Telemetry"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-[#67df70] animate-pulse"></span>
-            <span className="font-mono text-[11px] text-[#E2E8F0] font-medium">
-              Talos • 4 Nodes
-            </span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={onOpenClusterModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0E1117] hover:bg-[#151921] border border-[#1C212B] hover:border-[#67df70]/40 transition-colors"
+              title="View Cluster Nodes & Pod Telemetry"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-[#67df70] animate-pulse"></span>
+              <span className="font-mono text-[11px] text-[#E2E8F0] font-medium">
+                Talos • 4 Nodes
+              </span>
+            </button>
+          )}
 
-          {/* User / Settings Avatar */}
-          <button
-            onClick={() => onViewChange('config')}
-            aria-label="Settings and Preferences"
-            className="w-8 h-8 rounded-full bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] flex items-center justify-center font-bold text-xs shadow-sm hover:scale-105 active:scale-95 transition-transform"
-            title="Homelab Configuration & Preferences"
-          >
-            <span className="material-symbols-outlined text-[18px] text-[#0A0C10] font-semibold">
-              person
+          {session && !session.authenticated && (
+            <span
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0E1117] border border-rose-400/40 font-mono text-[11px] text-rose-300"
+              title="No Authelia identity was received. Open the launchpad through the SSO gateway."
+            >
+              <span className="material-symbols-outlined text-[14px]">lock</span>
+              <span>Signed out</span>
             </span>
-          </button>
+          )}
+
+          {ssoUser && (
+            <div className="hidden sm:flex flex-col items-end leading-tight" title={describeUser(ssoUser)}>
+              <span className="text-[12px] font-medium text-white truncate max-w-[140px]">
+                {ssoUser.name || ssoUser.username}
+              </span>
+              <span
+                className={`font-mono text-[9px] uppercase tracking-wider ${
+                  isAdmin ? 'text-[#67df70]' : 'text-[#94A3B8]'
+                }`}
+              >
+                {ssoUser.role}
+              </span>
+            </div>
+          )}
+
+          {/* User Avatar (opens configuration for administrators) */}
+          {isAdmin ? (
+            <button
+              onClick={() => onViewChange('config')}
+              aria-label="Settings and Preferences"
+              className="w-8 h-8 rounded-full bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] flex items-center justify-center font-bold text-xs shadow-sm hover:scale-105 active:scale-95 transition-transform"
+              title={ssoUser ? describeUser(ssoUser) : 'Homelab Configuration & Preferences'}
+            >
+              {ssoUser ? (
+                <span>{getInitials(ssoUser)}</span>
+              ) : (
+                <span className="material-symbols-outlined text-[18px] text-[#0A0C10] font-semibold">
+                  person
+                </span>
+              )}
+            </button>
+          ) : (
+            ssoUser && (
+              <span
+                className="w-8 h-8 rounded-full bg-[#151921] border border-[#283141] text-[#CBD5E1] flex items-center justify-center font-bold text-xs"
+                title={describeUser(ssoUser)}
+              >
+                {getInitials(ssoUser)}
+              </span>
+            )
+          )}
         </div>
       </div>
     </header>

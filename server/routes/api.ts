@@ -15,8 +15,16 @@ import {
 } from '../k8s/argo';
 import { fetchClusterTelemetry, TelemetryData } from '../k8s/telemetry';
 import {
+  attachUser,
+  buildSession,
+  getRequestUser,
+  rejectCrossSiteMutations,
+  requireAdmin,
+  requireAuth,
+} from '../auth/forwardAuth';
+import { AuthUser } from '../../src/types';
+import {
   getHealthSnapshot,
-  HealthSnapshot,
   MAX_TARGETS,
   registerTargets,
   requestProbeRound,
@@ -25,26 +33,46 @@ import {
 
 export const apiRouter = Router();
 
-// Set of connected SSE clients
-const sseClients = new Set<Response>();
+// Connected SSE clients and the user each stream belongs to
+const sseClients = new Map<Response, AuthUser>();
 
-function broadcastSSE(eventType: string, data: any) {
-  const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
-    client.write(message);
+function writeSSE(client: Response, eventType: string, data: unknown) {
+  client.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// Cluster, route, and GitOps events are only streamed to administrators
+function broadcastAdminSSE(eventType: string, data: unknown) {
+  for (const [client, user] of sseClients) {
+    if (user.role === 'admin') writeSSE(client, eventType, data);
   }
 }
 
-export function broadcastTelemetry(data: TelemetryData) {
-  broadcastSSE('telemetry:updated', data);
+// Administrators see every probe result; other users only their own targets
+function healthScope(user: AuthUser): string | undefined {
+  return user.role === 'admin' ? undefined : user.username;
 }
 
-export function broadcastServiceHealth(snapshot: HealthSnapshot) {
-  broadcastSSE('health:updated', snapshot);
+export function broadcastTelemetry(data: TelemetryData) {
+  broadcastAdminSSE('telemetry:updated', data);
 }
+
+export function broadcastServiceHealth() {
+  for (const [client, user] of sseClients) {
+    writeSSE(client, 'health:updated', getHealthSnapshot(healthScope(user)));
+  }
+}
+
+apiRouter.use(attachUser);
+apiRouter.use(rejectCrossSiteMutations);
 
 // 1. Healthcheck Endpoint
-apiRouter.get('/health', (req: Request, res: Response) => {
+apiRouter.get('/health', (_req: Request, res: Response) => {
+  // Liveness probes are unauthenticated; cluster details are for administrators
+  if (getRequestUser(res)?.role !== 'admin') {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    return;
+  }
+
   const client = getK8sClient();
   const argoApps = getCachedArgoApps();
   const argoSynced = argoApps.filter((a) => a.syncStatus === 'Synced').length;
@@ -78,8 +106,16 @@ apiRouter.get('/health', (req: Request, res: Response) => {
   });
 });
 
+// Current user session (public, so the UI can tell signed-out users apart)
+apiRouter.get('/auth/me', (_req: Request, res: Response) => {
+  res.json({ success: true, ...buildSession(getRequestUser(res)) });
+});
+
+// Every endpoint below requires an authenticated user
+apiRouter.use(requireAuth);
+
 // 2. Discovered Routes Endpoint
-apiRouter.get('/routes', async (req: Request, res: Response) => {
+apiRouter.get('/routes', requireAdmin, async (req: Request, res: Response) => {
   try {
     let routes = getCachedRoutes();
     if (routes.length === 0) {
@@ -102,13 +138,13 @@ apiRouter.get('/routes', async (req: Request, res: Response) => {
 });
 
 // 3. Trigger Route Scan
-apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
+apiRouter.post('/routes/scan', requireAdmin, async (req: Request, res: Response) => {
   try {
     const existingImported = req.body?.importedIds ? new Set<string>(req.body.importedIds) : new Set<string>();
     const routes = await scanClusterRoutes(existingImported);
 
     // Broadcast update to all connected SSE clients
-    broadcastSSE('routes:updated', {
+    broadcastAdminSSE('routes:updated', {
       routes,
       lastScannedAt: getLastScannedAt(),
       count: routes.length,
@@ -131,7 +167,7 @@ apiRouter.post('/routes/scan', async (req: Request, res: Response) => {
 });
 
 // 4. Mark Route as Imported
-apiRouter.post('/routes/import', (req: Request, res: Response) => {
+apiRouter.post('/routes/import', requireAdmin, (req: Request, res: Response) => {
   const { routeId } = req.body;
   if (!routeId) {
     res.status(400).json({ success: false, error: 'Missing routeId' });
@@ -140,7 +176,7 @@ apiRouter.post('/routes/import', (req: Request, res: Response) => {
 
   const marked = markRouteImported(routeId);
   if (marked) {
-    broadcastSSE('route:imported', { routeId });
+    broadcastAdminSSE('route:imported', { routeId });
     res.json({ success: true, routeId });
   } else {
     res.status(404).json({ success: false, error: 'Route not found in cache' });
@@ -148,7 +184,7 @@ apiRouter.post('/routes/import', (req: Request, res: Response) => {
 });
 
 // 5. ArgoCD Applications Endpoint
-apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
+apiRouter.get('/argo/applications', requireAdmin, async (req: Request, res: Response) => {
   try {
     let applications = getCachedArgoApps();
     if (applications.length === 0) {
@@ -171,10 +207,10 @@ apiRouter.get('/argo/applications', async (req: Request, res: Response) => {
 });
 
 // 6. ArgoCD Refresh Scan
-apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
+apiRouter.post('/argo/refresh', requireAdmin, async (req: Request, res: Response) => {
   try {
     const applications = await fetchArgoApplications();
-    broadcastSSE('argo:updated', {
+    broadcastAdminSSE('argo:updated', {
       applications,
       lastScannedAt: getLastArgoScannedAt(),
       count: applications.length,
@@ -196,7 +232,7 @@ apiRouter.post('/argo/refresh', async (req: Request, res: Response) => {
 });
 
 // 7. Trigger Sync for Single Application
-apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Response) => {
+apiRouter.post('/argo/applications/:name/sync', requireAdmin, async (req: Request, res: Response) => {
   const rawName = String(req.params.name ?? '');
   const safeName = rawName.replace(/\n|\r/g, '');
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(safeName)) {
@@ -207,8 +243,8 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
   try {
     const result = await syncArgoApplication(safeName);
 
-    broadcastSSE('argo:syncing', { name: safeName });
-    broadcastSSE('argo:updated', {
+    broadcastAdminSSE('argo:syncing', { name: safeName });
+    broadcastAdminSSE('argo:updated', {
       applications: getCachedArgoApps(),
       lastScannedAt: getLastArgoScannedAt(),
     });
@@ -229,11 +265,11 @@ apiRouter.post('/argo/applications/:name/sync', async (req: Request, res: Respon
 });
 
 // 8. Trigger Batch Sync for OutOfSync Applications
-apiRouter.post('/argo/sync-all', async (req: Request, res: Response) => {
+apiRouter.post('/argo/sync-all', requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = await syncAllArgoApplications();
 
-    broadcastSSE('argo:updated', {
+    broadcastAdminSSE('argo:updated', {
       applications: getCachedArgoApps(),
       lastScannedAt: getLastArgoScannedAt(),
     });
@@ -271,18 +307,19 @@ async function handleTelemetry(res: Response, force: boolean) {
 }
 
 // 9. Real-Time Cluster Telemetry Endpoint
-apiRouter.get('/telemetry', (_req: Request, res: Response) => {
+apiRouter.get('/telemetry', requireAdmin, (_req: Request, res: Response) => {
   void handleTelemetry(res, false);
 });
 
 // 10. Force Refresh Telemetry
-apiRouter.post('/telemetry/refresh', (_req: Request, res: Response) => {
+apiRouter.post('/telemetry/refresh', requireAdmin, (_req: Request, res: Response) => {
   void handleTelemetry(res, true);
 });
 
 // 11. Service Health Probe Results
 apiRouter.get('/services/health', (_req: Request, res: Response) => {
-  res.json({ success: true, ...getHealthSnapshot() });
+  const user = getRequestUser(res) as AuthUser;
+  res.json({ success: true, ...getHealthSnapshot(healthScope(user)) });
 });
 
 // 12. Register Service URLs for Background Probing
@@ -293,8 +330,9 @@ apiRouter.post('/services/health/targets', (req: Request, res: Response) => {
     return;
   }
 
-  const { accepted, rejected } = registerTargets(urls);
-  const snapshot = getHealthSnapshot();
+  const user = getRequestUser(res) as AuthUser;
+  const { accepted, rejected } = registerTargets(urls, user.username);
+  const snapshot = getHealthSnapshot(healthScope(user));
   const unprobed = accepted.filter((url) => !snapshot.results[url]);
   if (unprobed.length > 0) {
     void runProbeRound(unprobed);
@@ -306,8 +344,9 @@ apiRouter.post('/services/health/targets', (req: Request, res: Response) => {
 // 13. On-Demand Probe Round (throttled)
 apiRouter.post('/services/health/probe', async (_req: Request, res: Response) => {
   try {
+    const user = getRequestUser(res) as AuthUser;
     const { throttled } = await requestProbeRound();
-    res.json({ success: true, throttled, ...getHealthSnapshot() });
+    res.json({ success: true, throttled, ...getHealthSnapshot(healthScope(user)) });
   } catch (error: any) {
     const safeErr = String((error as Error)?.message || error).replace(/[\n\r]/g, '');
     console.error('[API] /services/health/probe error: %s', safeErr);
@@ -324,34 +363,35 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
     'Access-Control-Allow-Origin': '*',
   });
 
-  // Send initial connected event with current routes and argo counts
-  const initialRoutes = getCachedRoutes();
-  const initialArgo = getCachedArgoApps();
-  res.write(
-    `event: connected\ndata: ${JSON.stringify({
-      connected: true,
-      routesCount: initialRoutes.length,
-      argoCount: initialArgo.length,
-    })}\n\n`
+  const user = getRequestUser(res) as AuthUser;
+  const isAdmin = user.role === 'admin';
+
+  // Send initial connected event (route and argo counts for administrators)
+  writeSSE(
+    res,
+    'connected',
+    isAdmin
+      ? { connected: true, routesCount: getCachedRoutes().length, argoCount: getCachedArgoApps().length }
+      : { connected: true }
   );
 
   // Send current telemetry state immediately on connection
-  fetchClusterTelemetry()
-    .then((data) => {
-      res.write(`event: telemetry:updated\ndata: ${JSON.stringify(data)}\n\n`);
-    })
-    .catch((err) => {
-      const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
-      console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
-    });
-
-  // Send latest service health results so cards render status immediately
-  const healthSnapshot = getHealthSnapshot();
-  if (healthSnapshot.lastProbedAt) {
-    res.write(`event: health:updated\ndata: ${JSON.stringify(healthSnapshot)}\n\n`);
+  if (isAdmin) {
+    fetchClusterTelemetry()
+      .then((data) => writeSSE(res, 'telemetry:updated', data))
+      .catch((err) => {
+        const safeErr = String((err as Error)?.message || err).replace(/[\n\r]/g, '');
+        console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
+      });
   }
 
-  sseClients.add(res);
+  // Send latest service health results so cards render status immediately
+  const healthSnapshot = getHealthSnapshot(healthScope(user));
+  if (healthSnapshot.lastProbedAt) {
+    writeSSE(res, 'health:updated', healthSnapshot);
+  }
+
+  sseClients.set(res, user);
 
   // Heartbeat every 25s to prevent connection timeout
   const heartbeatTimer = setInterval(() => {

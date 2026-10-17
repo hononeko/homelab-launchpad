@@ -2,7 +2,8 @@ import React from 'react';
 
 interface FooterProps {
   onOpenSearch: () => void;
-  onOpenClusterModal: () => void;
+  // Omitted for users without access to cluster details
+  onOpenClusterModal?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -17,12 +18,16 @@ export const Footer: React.FC<FooterProps> = ({
           <span className="material-symbols-outlined text-[14px] text-[#67df70]">
             dns
           </span>
-          <button
-            onClick={onOpenClusterModal}
-            className="hover:text-white transition-colors"
-          >
-            Talos Linux
-          </button>
+          {onOpenClusterModal ? (
+            <button
+              onClick={onOpenClusterModal}
+              className="hover:text-white transition-colors"
+            >
+              Talos Linux
+            </button>
+          ) : (
+            <span>Talos Linux</span>
+          )}
           <span className="text-[#283141]">•</span>
           <span>Cilium CNI</span>
           <span className="text-[#283141]">•</span>
