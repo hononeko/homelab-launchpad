@@ -104,7 +104,7 @@ Tests use Bun's built-in runner (`bun test`) in two separate runs, so the browse
 | `test:unit` | Both of the above |
 | `test:coverage` | Both, with LCOV reports in `coverage/{server,client}/lcov.info` and the per-file floors from `bunfig.toml` |
 
-CI runs `test:coverage`. The **SonarCloud Analysis** workflow uploads both reports once the `SONAR_TOKEN` secret is set and SonarCloud's automatic analysis is turned off.
+CI runs `test:coverage`, and the Sonar job uploads both reports to SonarCloud.
 
 ### Authentication & Access Control (Authelia)
 
@@ -181,6 +181,19 @@ Endpoints: `GET /api/services/health`, `POST /api/services/health/targets` (`{ "
 `POST /api/services/health/probe` (on-demand, throttled to once per 5s).
 
 ---
+
+## CI/CD & Releases
+
+Same model as the other container repositories, built on the shared actions in [hononeko/actions](https://github.com/hononeko/actions): `bun-setup`, `version`, `release-notes` and `smoke-test`.
+
+| Workflow | When | What |
+|---|---|---|
+| `pr.yml` | Pull requests | **validate** (lint, tests with coverage against a Valkey service, build, smoke test), **sonar**, and **image** (amd64 + arm64 built natively, smoke-tested, not pushed) |
+| `main.yml` | Push to `main` | The same, then publishes a multi-arch **release candidate** to `ghcr.io/hononeko/homelab-launchpad` as `X.Y.Z-rc.N`, `sha-<commit>` and `edge`, with build-provenance attestation |
+| `cd.yml` | Manual (`workflow_dispatch`) | Promotes this commit's release candidate (same digest, no rebuild) to `X.Y.Z` and `latest`, creates the GitHub Release with grouped notes, and prunes that version's candidate tags. `dry_run` shows all of this without changing anything; only `main` publishes. |
+
+- **Versions** come from [Conventional Commits](https://www.conventionalcommits.org/): `feat` gives a minor bump, `!` or `BREAKING CHANGE:` a major one, and `docs`/`test` nothing.
+- **Pinning:** Bun is pinned in `.bun-version` (CI) and in the Dockerfile's `oven/bun:<version>-alpine`. Renovate updates both together with `@types/bun`.
 
 ## Project Management (Kaneo)
 

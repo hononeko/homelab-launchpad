@@ -1,0 +1,52 @@
+name: Validate
+
+# Lint, tests with coverage (incl. the Valkey store contract), production build and smoke test. Shared by pr.yml and
+# main.yml. Uploads the coverage reports for the Sonar job.
+on:
+  workflow_call:
+
+jobs:
+  validate:
+    name: Lint, Test & Build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    # Valkey for the preferences store contract tests (skipped without VALKEY_TEST_URL)
+    services:
+      valkey:
+        image: valkey/valkey:9.2-alpine@sha256:cdcb7b1c7b6f1c9cb9442c71ac6275e78184657448407b2c1fdde7ee8024f4fb
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Bun and dependencies
+        uses: hononeko/actions/bun-setup@5195ba91f927f924616c364a7eddd737fbff5308 # v1.2.0
+
+      - name: TypeScript typecheck
+        run: bun run lint
+
+      - name: Unit tests with coverage thresholds
+        run: bun run test:coverage
+        env:
+          VALKEY_TEST_URL: redis://localhost:6379
+
+      - name: Build frontend and server
+        run: bun run build
+
+      - name: Production server smoke test
+        run: bun run test:smoke
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coverage
+          path: coverage/*/lcov.info
+          if-no-files-found: error
+          retention-days: 1
