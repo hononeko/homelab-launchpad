@@ -25,7 +25,7 @@ import {
 import { AuthUser } from '../../src/types';
 import {
   getHealthSnapshot,
-  MAX_TARGETS,
+  MAX_TARGETS_PER_REGISTRANT,
   registerTargets,
   requestProbeRound,
   runProbeRound,
@@ -37,6 +37,11 @@ export const apiRouter = Router();
 const sseClients = new Map<Response, AuthUser>();
 
 function writeSSE(client: Response, eventType: string, data: unknown) {
+  // A client can disconnect before its 'close' handler removes it
+  if (client.destroyed || client.writableEnded) {
+    sseClients.delete(client);
+    return;
+  }
   client.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -325,13 +330,17 @@ apiRouter.get('/services/health', (_req: Request, res: Response) => {
 // 12. Register Service URLs for Background Probing
 apiRouter.post('/services/health/targets', (req: Request, res: Response) => {
   const urls = req.body?.urls;
-  if (!Array.isArray(urls) || urls.length > MAX_TARGETS) {
-    res.status(400).json({ success: false, error: `Expected "urls" array with at most ${MAX_TARGETS} entries` });
+  if (!Array.isArray(urls) || urls.length > MAX_TARGETS_PER_REGISTRANT) {
+    res
+      .status(400)
+      .json({ success: false, error: `Expected "urls" array with at most ${MAX_TARGETS_PER_REGISTRANT} entries` });
     return;
   }
 
   const user = getRequestUser(res) as AuthUser;
-  const { accepted, rejected } = registerTargets(urls, user.username);
+  const { accepted, rejected } = registerTargets(urls, user.username, {
+    allowClusterRoutes: user.role === 'admin',
+  });
   const snapshot = getHealthSnapshot(healthScope(user));
   const unprobed = accepted.filter((url) => !snapshot.results[url]);
   if (unprobed.length > 0) {
@@ -360,7 +369,6 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
   });
 
   const user = getRequestUser(res) as AuthUser;

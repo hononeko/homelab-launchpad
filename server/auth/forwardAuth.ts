@@ -4,11 +4,17 @@ import { AuthSession, AuthUser } from '../../src/types';
 
 export type AuthMode = 'forward-auth' | 'none';
 
+/**
+ * Peers whose identity headers are trusted: an explicit list, any peer (`*`, for
+ * when a NetworkPolicy already restricts ingress to the gateway), or no peer.
+ */
+export type TrustedProxies = net.BlockList | 'any' | 'none';
+
 export interface AuthConfig {
   mode: AuthMode;
   adminGroups: string[];
   viewerCategories: string[];
-  trustedProxies: net.BlockList | null;
+  trustedProxies: TrustedProxies;
   devUser: { username: string; groups: string[] } | null;
 }
 
@@ -34,30 +40,53 @@ function splitList(raw: string | undefined, fallback: string): string[] {
 let cachedProxySpec: string | null = null;
 let cachedProxyList: net.BlockList | null = null;
 
-/** Parses a comma-separated list of IPs and CIDRs into a BlockList (memoized per value). */
+function parsePrefix(prefix: string, family: number): number | null {
+  if (!/^\d{1,3}$/.test(prefix)) return null;
+  const value = Number.parseInt(prefix, 10);
+  return value <= (family === 6 ? 128 : 32) ? value : null;
+}
+
+/**
+ * Parses a comma-separated list of IPs and CIDRs into a BlockList (memoized per
+ * value). Invalid entries are skipped; returns null when no entry is valid.
+ */
 export function parseTrustedProxies(spec: string): net.BlockList | null {
   if (spec === cachedProxySpec) return cachedProxyList;
 
   let list: net.BlockList | null = null;
   for (const entry of splitList(spec, '')) {
-    const [address, prefix] = entry.split('/');
+    const [address, prefix, ...rest] = entry.split('/');
     const family = net.isIP(address);
-    if (family === 0) {
+    const prefixLength = prefix === undefined ? null : parsePrefix(prefix, family);
+    if (family === 0 || rest.length > 0 || (prefix !== undefined && prefixLength === null)) {
       console.warn('[Auth] Ignoring invalid AUTH_TRUSTED_PROXIES entry: %s', entry.replace(/[\r\n]/g, ''));
       continue;
     }
     list ??= new net.BlockList();
     const type = family === 6 ? 'ipv6' : 'ipv4';
-    if (prefix === undefined) {
+    if (prefixLength === null) {
       list.addAddress(address, type);
     } else {
-      list.addSubnet(address, Number.parseInt(prefix, 10), type);
+      list.addSubnet(address, prefixLength, type);
     }
   }
 
   cachedProxySpec = spec;
   cachedProxyList = list;
   return list;
+}
+
+/**
+ * Resolves AUTH_TRUSTED_PROXIES. When unset (or invalid), development trusts any
+ * peer, but production trusts none, so identity headers are ignored until the
+ * gateway is configured: a misconfigured deployment fails closed.
+ */
+export function resolveTrustedProxies(spec: string | undefined, isProduction: boolean): TrustedProxies {
+  const trimmed = spec?.trim() ?? '';
+  if (trimmed === '*') return 'any';
+  const list = parseTrustedProxies(trimmed);
+  if (list) return list;
+  return isProduction ? 'none' : 'any';
 }
 
 export function getAuthConfig(): AuthConfig {
@@ -67,7 +96,7 @@ export function getAuthConfig(): AuthConfig {
     mode: process.env.AUTH_MODE === 'none' ? 'none' : 'forward-auth',
     adminGroups: splitList(process.env.AUTH_ADMIN_GROUPS, 'admins'),
     viewerCategories: splitList(process.env.AUTH_VIEWER_CATEGORIES, 'MEDIA,HOME & LIVING'),
-    trustedProxies: parseTrustedProxies(process.env.AUTH_TRUSTED_PROXIES ?? ''),
+    trustedProxies: resolveTrustedProxies(process.env.AUTH_TRUSTED_PROXIES, isProduction),
     // Simulated identity for local development only; never honored in production
     devUser:
       !isProduction && devUsername
@@ -82,8 +111,9 @@ function normalizeRemoteAddress(address: string | undefined): string | null {
   return address.startsWith('::ffff:') && net.isIPv4(address.slice(7)) ? address.slice(7) : address;
 }
 
-export function isTrustedProxy(address: string | undefined, trustedProxies: net.BlockList | null): boolean {
-  if (!trustedProxies) return true;
+export function isTrustedProxy(address: string | undefined, trustedProxies: TrustedProxies): boolean {
+  if (trustedProxies === 'any') return true;
+  if (trustedProxies === 'none') return false;
   const normalized = normalizeRemoteAddress(address);
   if (!normalized) return false;
   const family = net.isIP(normalized);
@@ -146,7 +176,8 @@ export function buildSession(user: AuthUser | null, config: AuthConfig = getAuth
     authenticated: user !== null,
     mode: config.mode,
     user,
-    viewerCategories: config.viewerCategories,
+    // Signed-out visitors see no services, so they get no categories either
+    viewerCategories: user ? config.viewerCategories : [],
   };
 }
 
@@ -173,14 +204,32 @@ export function requireAdmin(_req: Request, res: Response, next: NextFunction): 
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+// `none` is a user-initiated request (e.g. typed into the address bar)
+const ALLOWED_FETCH_SITES = new Set(['same-origin', 'none']);
+
+function isSameOriginRequest(req: Request): boolean {
+  const fetchSite = req.get('Sec-Fetch-Site');
+  if (fetchSite !== undefined) return ALLOWED_FETCH_SITES.has(fetchSite);
+
+  // Older browsers omit Fetch Metadata; fall back to comparing Origin with Host.
+  // Requests with neither header come from non-browser clients, which cannot
+  // carry a victim's SSO cookie.
+  const origin = req.get('Origin');
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === req.get('Host');
+  } catch {
+    return false;
+  }
+}
 
 /**
- * Rejects state-changing requests initiated by other sites. Browsers send
- * `Sec-Fetch-Site` on every request, so a forged cross-site POST that would
- * carry the SSO session cookie is refused before it reaches a handler.
+ * Rejects state-changing requests initiated by any other origin, including
+ * sibling subdomains: the Authelia session cookie is shared across the whole
+ * domain, so `same-site` requests would otherwise carry it.
  */
 export function rejectCrossSiteMutations(req: Request, res: Response, next: NextFunction): void {
-  if (!SAFE_METHODS.has(req.method) && req.get('Sec-Fetch-Site') === 'cross-site') {
+  if (!SAFE_METHODS.has(req.method) && !isSameOriginRequest(req)) {
     res.status(403).json({ success: false, error: 'Cross-site request rejected' });
     return;
   }

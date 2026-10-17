@@ -114,8 +114,12 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.warn('[Auth] AUTH_MODE=none: every request is treated as an administrator.');
   } else {
     console.log(`[Auth] Authelia forward-auth enabled (admin groups: ${authConfig.adminGroups.join(', ')})`);
-    if (!authConfig.trustedProxies) {
-      console.warn('[Auth] AUTH_TRUSTED_PROXIES is not set: identity headers are trusted from any client.');
+    if (authConfig.trustedProxies === 'none') {
+      console.error(
+        "[Auth] AUTH_TRUSTED_PROXIES is not set: identity headers are ignored and every user is signed out. Set the gateway IPs/CIDRs, or '*' if a NetworkPolicy restricts ingress to the gateway."
+      );
+    } else if (authConfig.trustedProxies === 'any') {
+      console.warn('[Auth] Identity headers are trusted from any peer (AUTH_TRUSTED_PROXIES unset in development, or "*").');
     }
     if (authConfig.devUser) {
       console.warn(`[Auth] Development identity active for requests without headers: ${authConfig.devUser.username}`);

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import {
   classifyHttpStatus,
   getHealthSnapshot,
+  MAX_TARGETS_PER_REGISTRANT,
   parseProbeTarget,
   probeUrl,
   ProbeConfig,
@@ -182,6 +183,19 @@ describe('probe scheduler', () => {
 
     await runProbeRound([`${baseUrl}/forbidden`]);
     expect(Object.keys(getHealthSnapshot().results)).toEqual([`${baseUrl}/forbidden`]);
+  });
+
+  test('enforces a per-user target quota without blocking other users', () => {
+    process.env.HEALTH_PROBE_ALLOWED_DOMAINS = '127.0.0.1';
+    const urls = Array.from({ length: MAX_TARGETS_PER_REGISTRANT }, (_, i) => `http://127.0.0.1:1/${i}`);
+    expect(registerTargets(urls, 'alice').accepted).toHaveLength(MAX_TARGETS_PER_REGISTRANT);
+
+    // Over quota for new URLs, but re-registering existing ones still refreshes them
+    expect(registerTargets(['http://127.0.0.1:1/extra'], 'alice').rejected).toEqual(['http://127.0.0.1:1/extra']);
+    expect(registerTargets([urls[0]], 'alice').accepted).toEqual([urls[0]]);
+
+    expect(registerTargets(['http://127.0.0.1:1/extra'], 'bob').accepted).toEqual(['http://127.0.0.1:1/extra']);
+    expect(registerTargets([urls[0]], 'bob').accepted).toEqual([urls[0]]);
   });
 
   test('results are only visible to the users who registered the target', async () => {

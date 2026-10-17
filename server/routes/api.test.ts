@@ -3,7 +3,7 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { apiRouter, broadcastTelemetry } from './api';
-import { resetHealthProbeState, runProbeRound } from '../health/probe';
+import { parseProbeTarget, resetHealthProbeState, runProbeRound } from '../health/probe';
 import { INITIAL_NODES, INITIAL_TELEMETRY } from '../../src/data/initialData';
 
 let server: Server;
@@ -59,7 +59,7 @@ describe('public endpoints', () => {
 
   test('/auth/me reports the session for signed-in and signed-out users', async () => {
     const signedOut = await (await call('/auth/me')).json();
-    expect(signedOut).toMatchObject({ authenticated: false, mode: 'forward-auth', user: null });
+    expect(signedOut).toMatchObject({ authenticated: false, mode: 'forward-auth', user: null, viewerCategories: [] });
 
     const viewer = await (await call('/auth/me', ALICE)).json();
     expect(viewer.authenticated).toBe(true);
@@ -111,6 +111,23 @@ describe('role-based access control', () => {
     expect(sameOrigin.status).toBe(200);
   });
 
+  test('sibling-subdomain (same-site) mutations are rejected', async () => {
+    const res = await call('/telemetry/refresh', { ...ADMIN, 'Sec-Fetch-Site': 'same-site' }, { method: 'POST' });
+    expect(res.status).toBe(403);
+  });
+
+  test('falls back to Origin when Fetch Metadata is missing', async () => {
+    const foreign = await call('/telemetry/refresh', { ...ADMIN, Origin: 'https://tools.example.com' }, { method: 'POST' });
+    expect(foreign.status).toBe(403);
+
+    const own = new URL(baseUrl).origin;
+    const matching = await call('/telemetry/refresh', { ...ADMIN, Origin: own }, { method: 'POST' });
+    expect(matching.status).toBe(200);
+
+    const malformed = await call('/telemetry/refresh', { ...ADMIN, Origin: 'null' }, { method: 'POST' });
+    expect(malformed.status).toBe(403);
+  });
+
   test('identity headers from untrusted peers are ignored', async () => {
     process.env.AUTH_TRUSTED_PROXIES = '10.0.0.0/8';
     expect((await call('/routes', ADMIN)).status).toBe(401);
@@ -128,6 +145,25 @@ describe('role-based access control', () => {
 });
 
 describe('service health isolation', () => {
+  test('only administrators may register hosts known only from cluster routes', async () => {
+    // Populate the discovered-route cache (simulation data) and pick a host
+    const { routes } = await (await call('/routes', ADMIN)).json();
+    const clusterUrl = `https://${routes[0].host}/`;
+    process.env.HEALTH_PROBE_ALLOWED_DOMAINS = 'example.invalid';
+
+    const viewer = await (await postJson('/services/health/targets', ALICE, { urls: [clusterUrl] })).json();
+    expect(viewer.rejected).toEqual([clusterUrl]);
+
+    // Checked without a request so the test never probes a real host
+    expect(parseProbeTarget(clusterUrl, ['example.invalid'], true)).not.toBeNull();
+    expect(parseProbeTarget(clusterUrl, ['example.invalid'], false)).toBeNull();
+  });
+
+  test('rejects oversized registration batches', async () => {
+    const urls = Array.from({ length: 101 }, (_, i) => `http://127.0.0.1:1/${i}`);
+    expect((await postJson('/services/health/targets', ALICE, { urls })).status).toBe(400);
+  });
+
   test('users only see probe results for URLs they registered', async () => {
     process.env.HEALTH_PROBE_ALLOWED_DOMAINS = '127.0.0.1';
     const aliceUrl = 'http://127.0.0.1:1/alice';
@@ -174,6 +210,19 @@ describe('SSE stream', () => {
 
   test('requires authentication', async () => {
     expect((await call('/routes/stream')).status).toBe(401);
+  });
+
+  test('broadcasting to a disconnected client does not crash the server', async () => {
+    const stream = await openStream(ADMIN);
+    await stream.readUntil((t) => t.includes('event: connected'));
+    stream.close();
+
+    const telemetry = { telemetry: INITIAL_TELEMETRY, nodes: INITIAL_NODES, lastFetchedAt: new Date().toISOString() };
+    for (let i = 0; i < 5; i++) {
+      broadcastTelemetry(telemetry);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect((await call('/health')).status).toBe(200);
   });
 
   test('streams cluster events to administrators only', async () => {

@@ -12,7 +12,9 @@ export interface ProbeConfig {
   insecureTls: boolean;
 }
 
-export const MAX_TARGETS = 200;
+export const MAX_TARGETS = 300;
+// Per-user quota so one user cannot exhaust the shared target list
+export const MAX_TARGETS_PER_REGISTRANT = 100;
 // Targets not re-registered by any client within this window are dropped
 const TARGET_TTL_MS = 30 * 60 * 1000;
 // Minimum spacing between on-demand probe rounds
@@ -42,7 +44,7 @@ export function getProbeConfig(): ProbeConfig {
  * whose host is on the allowlist or belongs to a discovered cluster route, may be
  * probed, so the endpoint cannot be used as a generic SSRF / port-scan oracle.
  */
-export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[]): URL | null {
+export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[], allowClusterRoutes = true): URL | null {
   if (typeof rawUrl !== 'string' || rawUrl.length > 2048) return null;
   let parsed: URL;
   try {
@@ -50,17 +52,21 @@ export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[]): URL
   } catch {
     return null;
   }
-  return isAllowedProbeTarget(parsed, allowedDomains) ? parsed : null;
+  return isAllowedProbeTarget(parsed, allowedDomains, allowClusterRoutes) ? parsed : null;
 }
 
-export function isAllowedProbeTarget(url: URL, allowedDomains: string[]): boolean {
+/**
+ * Hosts of discovered cluster routes are allowed when `allowClusterRoutes` is
+ * set; callers disable it for non-administrators, who may not see those routes.
+ */
+export function isAllowedProbeTarget(url: URL, allowedDomains: string[], allowClusterRoutes = true): boolean {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
   if (url.username || url.password) return false;
 
   const host = url.hostname.toLowerCase();
   if (allowedDomains.includes('*')) return true;
   if (allowedDomains.some((d) => host === d || host.endsWith(`.${d}`))) return true;
-  return getCachedRoutes().some((r) => r.host.toLowerCase() === host);
+  return allowClusterRoutes && getCachedRoutes().some((r) => r.host.toLowerCase() === host);
 }
 
 export function classifyHttpStatus(code: number): ProbeStatus {
@@ -250,20 +256,38 @@ export interface RegisterResult {
   rejected: string[];
 }
 
-export function registerTargets(rawUrls: unknown[], registrant: string): RegisterResult {
+export interface RegisterOptions {
+  allowClusterRoutes: boolean;
+}
+
+export function registerTargets(
+  rawUrls: unknown[],
+  registrant: string,
+  { allowClusterRoutes }: RegisterOptions = { allowClusterRoutes: false }
+): RegisterResult {
   const { allowedDomains } = getProbeConfig();
   const now = Date.now();
   const accepted: string[] = [];
   const rejected: string[] = [];
+  let registrantCount = [...targets.values()].filter((t) => t.registrants.has(registrant)).length;
 
   for (const raw of rawUrls) {
-    const parsed = parseProbeTarget(raw, allowedDomains);
+    const parsed = parseProbeTarget(raw, allowedDomains, allowClusterRoutes);
     if (!parsed) {
       if (typeof raw === 'string') rejected.push(raw.slice(0, 256));
       continue;
     }
     const key = raw as string;
     const existing = targets.get(key);
+    if (existing?.registrants.has(registrant)) {
+      existing.registrants.set(registrant, now);
+      accepted.push(key);
+      continue;
+    }
+    if (registrantCount >= MAX_TARGETS_PER_REGISTRANT) {
+      rejected.push(key.slice(0, 256));
+      continue;
+    }
     if (existing) {
       existing.registrants.set(registrant, now);
     } else if (targets.size < MAX_TARGETS) {
@@ -272,6 +296,7 @@ export function registerTargets(rawUrls: unknown[], registrant: string): Registe
       rejected.push(key.slice(0, 256));
       continue;
     }
+    registrantCount++;
     accepted.push(key);
   }
 

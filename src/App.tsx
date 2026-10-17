@@ -250,9 +250,11 @@ export default function App() {
     };
   }, [isAuthenticated, isAdmin]);
 
-  // Viewers only see services in the categories they are authorized for
+  // Viewers only see services in the categories they are authorized for, and
+  // nothing is shown until the session confirms a signed-in user
   const visibleServices = useMemo(() => {
-    if (!session || isAdmin) return services;
+    if (!session?.authenticated) return [];
+    if (isAdmin) return services;
     const allowed = new Set(session.viewerCategories);
     return services.filter((s) => allowed.has(s.category));
   }, [services, session, isAdmin]);
@@ -611,6 +613,20 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
     return categories;
   }, [remainingServices]);
 
+  let emptyState = {
+    title: 'No Services on Launchpad',
+    description:
+      'Auto-discover active Gateway API HTTPRoutes and Ingresses from your Kubernetes cluster, or import services to build your dashboard.',
+  };
+  if (!session) {
+    emptyState = { title: 'Loading services…', description: 'Checking your session.' };
+  } else if (!session.authenticated) {
+    emptyState = {
+      title: 'Sign in to view services',
+      description: 'No signed-in user was detected. Open the launchpad through the SSO gateway to sign in.',
+    };
+  }
+
   // Operations views are administrator-only; viewers fall back to the overview
   const activeView: MainView =
     isAdmin || currentView === 'overview' || currentView === 'services' ? currentView : 'overview';
@@ -764,10 +780,10 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                     <span className="material-symbols-outlined text-[32px]">travel_explore</span>
                   </div>
                   <h3 className="text-base font-semibold text-white tracking-tight">
-                    No Services on Launchpad
+                    {emptyState.title}
                   </h3>
                   <p className="text-xs text-[#94A3B8] max-w-md mt-1.5 leading-relaxed">
-                    Auto-discover active Gateway API HTTPRoutes and Ingresses from your Kubernetes cluster, or import services to build your dashboard.
+                    {emptyState.description}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-3 mt-5">
                     {isAdmin && (

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { Request } from 'express';
-import { getAuthConfig, isTrustedProxy, parseTrustedProxies, resolveUser } from './forwardAuth';
+import { getAuthConfig, isTrustedProxy, parseTrustedProxies, resolveTrustedProxies, resolveUser } from './forwardAuth';
 
 const AUTH_ENV = [
   'AUTH_MODE',
@@ -80,6 +80,14 @@ describe('resolveUser', () => {
     expect(resolveUser(fakeRequest({}))).toMatchObject({ username: 'anonymous', role: 'admin' });
   });
 
+  test('production ignores identity headers when no trusted proxies are configured', () => {
+    process.env.NODE_ENV = 'production';
+    expect(resolveUser(fakeRequest({ 'Remote-User': 'jdoe', 'Remote-Groups': 'admins' }))).toBeNull();
+
+    process.env.AUTH_TRUSTED_PROXIES = '*';
+    expect(resolveUser(fakeRequest({ 'Remote-User': 'jdoe', 'Remote-Groups': 'admins' }))?.role).toBe('admin');
+  });
+
   test('development identity applies only outside production', () => {
     process.env.AUTH_DEV_USER = 'dev';
     process.env.AUTH_DEV_GROUPS = 'admins';
@@ -97,7 +105,7 @@ describe('resolveUser', () => {
 
 describe('trusted proxies', () => {
   test('matches IPv4 CIDRs, single addresses and IPv4-mapped IPv6 peers', () => {
-    const list = parseTrustedProxies('10.0.0.0/8, 192.168.1.1, fd00::/8');
+    const list = parseTrustedProxies('10.0.0.0/8, 192.168.1.1, fd00::/8')!;
     expect(isTrustedProxy('10.9.8.7', list)).toBe(true);
     expect(isTrustedProxy('::ffff:10.9.8.7', list)).toBe(true);
     expect(isTrustedProxy('192.168.1.1', list)).toBe(true);
@@ -106,13 +114,23 @@ describe('trusted proxies', () => {
     expect(isTrustedProxy(undefined, list)).toBe(false);
   });
 
-  test('trusts every peer when no list is configured', () => {
-    expect(isTrustedProxy('203.0.113.9', parseTrustedProxies(''))).toBe(true);
+  test('unset fails closed in production and open in development', () => {
+    expect(resolveTrustedProxies(undefined, true)).toBe('none');
+    expect(resolveTrustedProxies('', false)).toBe('any');
+    expect(resolveTrustedProxies(' * ', true)).toBe('any');
+    expect(isTrustedProxy('203.0.113.9', 'any')).toBe(true);
+    expect(isTrustedProxy('203.0.113.9', 'none')).toBe(false);
   });
 
-  test('skips invalid entries', () => {
-    const list = parseTrustedProxies('not-an-ip, 10.0.0.1');
+  test('skips invalid entries, including bad prefixes, without throwing', () => {
+    const list = parseTrustedProxies('not-an-ip, 10.0.0.1/abc, 10.1.0.0/35, 10.2.0.0/8/1, fd00::/129, -, 10.0.0.1')!;
     expect(isTrustedProxy('10.0.0.1', list)).toBe(true);
+    expect(isTrustedProxy('10.1.0.1', list)).toBe(false);
+    expect(isTrustedProxy('10.2.0.1', list)).toBe(false);
+  });
+
+  test('a list with only invalid entries fails closed in production', () => {
+    expect(resolveTrustedProxies('10.0.0.1/99', true)).toBe('none');
   });
 });
 
