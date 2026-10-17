@@ -7,6 +7,7 @@ import { fetchArgoApplications } from './k8s/argo';
 import { fetchClusterTelemetry } from './k8s/telemetry';
 import { getProbeConfig, startHealthProbeScheduler } from './health/probe';
 import { getAuthConfig } from './auth/forwardAuth';
+import { getPreferencesStore } from './preferences/store';
 
 dotenv.config();
 
@@ -35,6 +36,12 @@ app.listen(PORT, '0.0.0.0', async () => {
     if (authConfig.devUser) {
       console.warn(`[Auth] Development identity active for requests without headers: ${authConfig.devUser.username}`);
     }
+  }
+
+  if (getPreferencesStore().kind === 'memory') {
+    console.warn('[Preferences] VALKEY_URL is not set: preferences are kept in memory and lost on restart.');
+  } else {
+    console.log('[Preferences] Persisting preferences to Valkey.');
   }
 
   // Service health probes run independently of cluster connectivity

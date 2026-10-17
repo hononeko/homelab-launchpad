@@ -30,6 +30,8 @@ import {
   requestProbeRound,
   runProbeRound,
 } from '../health/probe';
+import { getPreferencesStore } from '../preferences/store';
+import { preferencesRouter } from './preferences';
 
 export const apiRouter = Router();
 
@@ -106,6 +108,9 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
       targets: healthSnapshot.targetCount,
       lastProbedAt: healthSnapshot.lastProbedAt,
     },
+    preferences: {
+      store: getPreferencesStore().kind,
+    },
     lastScannedAt: getLastScannedAt(),
     totalRoutesCached: getCachedRoutes().length,
   });
@@ -118,6 +123,9 @@ apiRouter.get('/auth/me', (_req: Request, res: Response) => {
 
 // Every endpoint below requires an authenticated user
 apiRouter.use(requireAuth);
+
+// Per-user preferences and launch counters
+apiRouter.use(preferencesRouter);
 
 // 2. Discovered Routes Endpoint
 apiRouter.get('/routes', requireAdmin, async (req: Request, res: Response) => {

@@ -7,7 +7,9 @@ import {
   ClusterNode,
   ServiceHealth,
   AuthSession,
+  ServiceCategory,
   TabFilter,
+  UserPreferences,
   MainView,
 } from './types';
 import {
@@ -27,6 +29,16 @@ import { ClusterModal } from './components/ClusterModal';
 import { ConfigView } from './components/ConfigView';
 import { Footer } from './components/Footer';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { usePreferencesSync } from './hooks/usePreferencesSync';
+
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved === null ? fallback : (JSON.parse(saved) as T);
+  } catch {
+    return fallback;
+  }
+}
 
 export default function App() {
   // Persistence state
@@ -71,7 +83,10 @@ export default function App() {
 
   // UI state
   const [currentView, setCurrentView] = useState<MainView>('overview');
-  const [activeTab, setActiveTab] = useState<TabFilter>('pinned');
+  const [activeTab, setActiveTab] = useState<TabFilter>(() => readStored('launchpad_default_tab', 'pinned'));
+  const [hiddenCategories, setHiddenCategories] = useState<ServiceCategory[]>(() =>
+    readStored('launchpad_hidden_categories', [])
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAutoDiscoveryOpen, setIsAutoDiscoveryOpen] = useState(false);
@@ -250,14 +265,34 @@ export default function App() {
     };
   }, [isAuthenticated, isAdmin]);
 
+  // Settings follow the signed-in user across devices; localStorage stays as the offline cache
+  const syncedSettings = useMemo(
+    () => ({ services, hiddenCategories, defaultTab: activeTab, argoEnabled, autoSyncRoutes }),
+    [services, hiddenCategories, activeTab, argoEnabled, autoSyncRoutes]
+  );
+  const { syncState, persisted, recordLaunch } = usePreferencesSync({
+    enabled: isAuthenticated,
+    settings: syncedSettings,
+    apply: (prefs: UserPreferences) => {
+      setServices(prefs.services);
+      setHiddenCategories(prefs.hiddenCategories);
+      setActiveTab(prefs.defaultTab);
+      setArgoEnabled(prefs.argoEnabled);
+      setAutoSyncRoutes(prefs.autoSyncRoutes);
+    },
+  });
+
   // Viewers only see services in the categories they are authorized for, and
-  // nothing is shown until the session confirms a signed-in user
+  // nothing is shown until the session confirms a signed-in user. Categories
+  // the user hid are left out for everyone.
   const visibleServices = useMemo(() => {
     if (!session?.authenticated) return [];
-    if (isAdmin) return services;
+    const hidden = new Set(hiddenCategories);
+    const shown = services.filter((s) => !hidden.has(s.category));
+    if (isAdmin) return shown;
     const allowed = new Set(session.viewerCategories);
-    return services.filter((s) => allowed.has(s.category));
-  }, [services, session, isAdmin]);
+    return shown.filter((s) => allowed.has(s.category));
+  }, [services, session, isAdmin, hiddenCategories]);
 
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
@@ -302,6 +337,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('kerrlab_autosync_routes', JSON.stringify(autoSyncRoutes));
   }, [autoSyncRoutes]);
+
+  useEffect(() => {
+    localStorage.setItem('launchpad_hidden_categories', JSON.stringify(hiddenCategories));
+  }, [hiddenCategories]);
+
+  useEffect(() => {
+    localStorage.setItem('launchpad_default_tab', JSON.stringify(activeTab));
+  }, [activeTab]);
 
   // Global keydown handler for ⌘K and /
   useEffect(() => {
@@ -373,6 +416,18 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
     showToast(`Launching ${service.name} (${service.displayUrl})`);
     window.open(safeUrl, '_blank', 'noopener,noreferrer');
+
+    // The optimistic count above is replaced by the server's atomic counter
+    void recordLaunch(service.id).then((stats) => {
+      if (!stats) return;
+      setServices((prev) =>
+        prev.map((s) =>
+          s.id === service.id
+            ? { ...s, launchesPerWeek: stats.count, lastAccessedTimestamp: stats.lastLaunchedAt }
+            : s
+        )
+      );
+    });
   };
 
   // Toggle service pin
@@ -1080,6 +1135,14 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
               onResetToDefaults={handleResetToDefaults}
               totalServicesCount={visibleServices.length}
               totalRoutesCount={discoveredRoutes.length}
+              hiddenCategories={hiddenCategories}
+              onToggleCategory={(category) =>
+                setHiddenCategories((prev) =>
+                  prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]
+                )
+              }
+              syncState={syncState}
+              persisted={persisted}
             />
           )}
         </div>

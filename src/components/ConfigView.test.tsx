@@ -1,11 +1,27 @@
 import { describe, expect, mock, test } from 'bun:test';
+import type { ComponentProps } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ConfigView } from './ConfigView';
 
-function renderConfig() {
-  const handlers = { onToggleArgo: mock(), onToggleAutoSyncRoutes: mock(), onResetToDefaults: mock() };
+function renderConfig(props: Partial<ComponentProps<typeof ConfigView>> = {}) {
+  const handlers = {
+    onToggleArgo: mock(),
+    onToggleAutoSyncRoutes: mock(),
+    onResetToDefaults: mock(),
+    onToggleCategory: mock(),
+  };
   const { container } = render(
-    <ConfigView argoEnabled autoSyncRoutes={false} totalServicesCount={12} totalRoutesCount={7} {...handlers} />
+    <ConfigView
+      argoEnabled
+      autoSyncRoutes={false}
+      totalServicesCount={12}
+      totalRoutesCount={7}
+      hiddenCategories={['CLUSTER & OPS']}
+      syncState="synced"
+      persisted
+      {...handlers}
+      {...props}
+    />
   );
   return { ...handlers, container };
 }
@@ -26,6 +42,27 @@ describe('ConfigView', () => {
 
     fireEvent.click(screen.getByText('Reset Services'));
     expect(onResetToDefaults).toHaveBeenCalledTimes(1);
+  });
+
+  test('category buttons show visibility and toggle categories', () => {
+    const { onToggleCategory } = renderConfig();
+    const ops = screen.getByText('CLUSTER & OPS');
+    expect(ops.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('MEDIA').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(ops);
+    expect(onToggleCategory).toHaveBeenCalledWith('CLUSTER & OPS');
+  });
+
+  test.each([
+    ['local', true, 'Saved in this browser only'],
+    ['synced', true, 'Synced to your account across devices'],
+    ['synced', false, 'Synced, but the server keeps preferences in memory only (no Valkey configured)'],
+    ['offline', true, 'Server unreachable: changes are saved in this browser only'],
+    ['error', true, 'Could not save to the server: changes are kept in this browser'],
+  ] as const)('describes the %s sync state (persisted=%p)', (syncState, persisted, text) => {
+    renderConfig({ syncState, persisted });
+    expect(screen.getByTestId('sync-status').textContent).toBe(text);
   });
 
   test('editing preferences and saving shows a confirmation', () => {

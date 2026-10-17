@@ -145,6 +145,23 @@ the domain.
 For local development, start the backend with an identity, e.g.
 `AUTH_DEV_USER=dev AUTH_DEV_GROUPS=admins bun run server`.
 
+### User Preferences (Valkey)
+
+Each signed-in user's launchpad follows them across devices. The synced state is the service catalog (its order is the display order, plus pins), hidden categories, the default tab, and the ArgoCD and auto-import toggles. It is stored per Authelia user (`Remote-User`); with `AUTH_MODE=none`, everyone shares the `anonymous` profile. Launch counters are incremented atomically on the server. `localStorage` remains the offline cache: if the server can't be reached, changes stay local and are never pushed over the server profile.
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/user/preferences` | The user's preferences with launch stats merged in, or `null` before the first save |
+| `PUT /api/user/preferences` | Save preferences (validated; at most 300 services) |
+| `POST /api/services/:id/launch` | Increment the launch counter and record the time |
+
+| Variable | Default | Description |
+|---|---|---|
+| `VALKEY_URL` | _(unset)_ | e.g. `redis://launchpad-valkey:6379`. When unset, preferences are kept **in memory** and lost on restart (a warning is logged). |
+
+> Deployment: unlike the cache-only Valkey instances elsewhere in the cluster, this one must
+> persist data. Run it with `--appendonly yes` on a persistent volume (e.g. `longhorn-retain`).
+
 ### Service Health Probes
 
 The backend probes every service URL registered by the dashboard (HEAD, falling back

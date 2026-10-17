@@ -1,4 +1,15 @@
 import React, { useState } from 'react';
+import { SERVICE_CATEGORIES, ServiceCategory } from '../types';
+import { SyncState } from '../hooks/usePreferencesSync';
+
+const SYNC_DESCRIPTIONS: Record<SyncState, string> = {
+  local: 'Saved in this browser only',
+  loading: 'Loading your synced settings…',
+  synced: 'Synced to your account across devices',
+  saving: 'Saving changes…',
+  offline: 'Server unreachable: changes are saved in this browser only',
+  error: 'Could not save to the server: changes are kept in this browser',
+};
 
 interface ConfigViewProps {
   argoEnabled: boolean;
@@ -8,6 +19,11 @@ interface ConfigViewProps {
   onResetToDefaults: () => void;
   totalServicesCount: number;
   totalRoutesCount: number;
+  hiddenCategories: ServiceCategory[];
+  onToggleCategory: (category: ServiceCategory) => void;
+  syncState: SyncState;
+  // Whether the server persists preferences (Valkey) or only keeps them in memory
+  persisted: boolean;
 }
 
 export const ConfigView: React.FC<ConfigViewProps> = ({
@@ -18,7 +34,16 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
   onResetToDefaults,
   totalServicesCount,
   totalRoutesCount,
+  hiddenCategories,
+  onToggleCategory,
+  syncState,
+  persisted,
 }) => {
+  let syncDescription = SYNC_DESCRIPTIONS[syncState];
+  if (syncState === 'synced' && !persisted) {
+    syncDescription = 'Synced, but the server keeps preferences in memory only (no Valkey configured)';
+  }
+
   const [clusterDomain, setClusterDomain] = useState('kerrlab.app');
   const [argoUrl, setArgoUrl] = useState('https://argo.kerrlab.app');
   const [gatewayClass, setGatewayClass] = useState('cilium-l7');
@@ -166,14 +191,44 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
           </div>
         </div>
 
+        {/* Category Visibility */}
+        <div className="bg-[#0E1117] border border-[#1C212B] rounded-2xl p-6 shadow-sm flex flex-col gap-3">
+          <div>
+            <span className="font-mono text-xs text-white block font-medium">Visible Categories</span>
+            <span className="font-mono text-[10px] text-[#64748B]">
+              Hidden categories are removed from your launchpad on every synced device
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {SERVICE_CATEGORIES.map((category) => {
+              const visible = !hiddenCategories.includes(category);
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  aria-pressed={visible}
+                  onClick={() => onToggleCategory(category)}
+                  className={`px-3 py-1.5 rounded-lg font-mono text-[11px] border transition-colors ${
+                    visible
+                      ? 'bg-[#67df70]/10 text-[#67df70] border-[#67df70]/40'
+                      : 'bg-[#151921] text-[#64748B] border-[#283141] line-through'
+                  }`}
+                >
+                  {category}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Stats & Reset Actions */}
         <div className="bg-[#0E1117] border border-[#1C212B] rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <span className="font-mono text-xs text-[#94A3B8] block">
               Active launchpad: {totalServicesCount} services • {totalRoutesCount} discovered routes
             </span>
-            <span className="font-mono text-[10px] text-[#64748B]">
-              All data persisted locally in browser state
+            <span className="font-mono text-[10px] text-[#64748B]" data-testid="sync-status">
+              {syncDescription}
             </span>
           </div>
 
