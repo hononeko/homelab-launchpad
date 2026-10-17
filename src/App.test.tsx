@@ -66,6 +66,8 @@ interface ApiReply {
   body?: unknown;
   // Simulates a network failure
   fail?: boolean;
+  // Delays the response; may differ per HTTP method
+  delayMs?: number | Partial<Record<string, number>>;
 }
 
 function installApi(authSession: AuthSession, overrides: Record<string, ApiReply> = {}) {
@@ -74,6 +76,9 @@ function installApi(authSession: AuthSession, overrides: Record<string, ApiReply
     const url = String(input);
     requests.push({ url, init });
     const override = overrides[url];
+    const delay =
+      typeof override?.delayMs === 'number' ? override.delayMs : override?.delayMs?.[init?.method ?? 'GET'];
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (override?.fail) throw new TypeError('Failed to fetch');
     let body: unknown = override?.body ?? { success: true };
     if (!override && url === '/api/auth/me') body = { success: true, ...authSession };
@@ -161,16 +166,20 @@ describe('App live updates and actions', () => {
   });
 
   test('launching a service opens it safely and records the launch', async () => {
-    installApi(session('viewer'));
+    installApi(session('viewer'), {
+      '/api/services/imported-mealie/launch': { body: { success: true, id: 'imported-mealie', count: 10, lastLaunchedAt: 1 } },
+    });
     const open = mock();
     window.open = open as unknown as typeof window.open;
     render(<App />);
 
     fireEvent.click(await screen.findByText('Recipe manager'));
     expect(open).toHaveBeenCalledWith('https://mealie.example.com/', '_blank', 'noopener,noreferrer');
-    expect(await screen.findByText('4 launches/wk')).toBeDefined();
+    // Optimistic increment first, then the server's atomic count
+    expect(await screen.findByText('10 launches/wk')).toBeDefined();
+    expect(posted('/api/services/imported-mealie/launch')).toHaveLength(1);
     const saved = JSON.parse(localStorage.getItem('launchpad_services')!);
-    expect(saved.find((s: ServiceItem) => s.id === 'imported-mealie').launchesPerWeek).toBe(4);
+    expect(saved.find((s: ServiceItem) => s.id === 'imported-mealie').launchesPerWeek).toBe(10);
   });
 });
 
@@ -328,5 +337,156 @@ describe('App navigation', () => {
     expect(await screen.findByText('Cluster Services Directory')).toBeDefined();
     expect(screen.getByText('// MEDIA (1)')).toBeDefined();
     expect(screen.getByText('// HOME & LIVING (1)')).toBeDefined();
+  });
+});
+
+describe('App preference sync', () => {
+  const puts = () => requests.filter((r) => r.url === '/api/user/preferences' && r.init?.method === 'PUT');
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 800));
+
+  function serverPrefs(overrides: Record<string, unknown> = {}) {
+    return {
+      '/api/user/preferences': {
+        body: {
+          success: true,
+          persisted: true,
+          preferences: {
+            services: [makeService({ id: 'imported-plex', name: 'Plex', description: 'Plex server', isPinned: true })],
+            hiddenCategories: [],
+            defaultTab: 'pinned',
+            argoEnabled: true,
+            autoSyncRoutes: false,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            ...overrides,
+          },
+        },
+      },
+    };
+  }
+
+  test('server preferences replace local state without being saved straight back', async () => {
+    installApi(session('viewer'), serverPrefs({ defaultTab: 'frequent' }));
+    render(<App />);
+
+    expect(await screen.findByText('Plex')).toBeDefined();
+    expect(screen.queryByText('Mealie')).toBeNull();
+    expect(screen.getByText('SORTED BY: LAUNCH FREQUENCY')).toBeDefined();
+    await settle();
+    expect(puts()).toHaveLength(0);
+  });
+
+  test('hidden categories from the profile hide services', async () => {
+    installApi(
+      session('viewer'),
+      serverPrefs({
+        services: [makeService({ isPinned: true }), { ...SERVICES[1] }],
+        hiddenCategories: ['HOME & LIVING'],
+      })
+    );
+    render(<App />);
+
+    // Local state (which includes Mealie) renders first; wait for the profile to apply
+    await waitFor(() => expect(requested('/api/user/preferences')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Mealie')).toBeNull());
+    expect(screen.getByText('Jellyfin')).toBeDefined();
+  });
+
+  test('the first sync uploads local services with their launch counts', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const body = JSON.parse(String(puts()[0].init!.body));
+    expect(body.services.map((s: ServiceItem) => s.id)).toEqual(SERVICES.map((s) => s.id));
+    expect(body.services[0].launchesPerWeek).toBe(3);
+  });
+
+  test('later changes are saved after a short debounce, without launch stats', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click((await screen.findAllByTitle('Unpin service'))[0]);
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 2000 });
+
+    const body = JSON.parse(String(puts()[1].init!.body));
+    expect(body.services[0]).toMatchObject({ id: 'imported-jellyfin', isPinned: false });
+    expect('launchesPerWeek' in body.services[0]).toBe(false);
+  });
+
+  test('when the server is unreachable, local changes are never pushed over the profile', async () => {
+    installApi(session('viewer'), { '/api/user/preferences': { status: 503, body: { success: false } } });
+    render(<App />);
+    await screen.findByText('Mealie');
+
+    fireEvent.click(screen.getAllByTitle('Unpin service')[0]);
+    await settle();
+    expect(puts()).toHaveLength(0);
+    // The change is still kept locally
+    expect(JSON.parse(localStorage.getItem('launchpad_services')!)[0].isPinned).toBe(false);
+  });
+
+  test('signed-out visitors never contact the preferences API', async () => {
+    installApi(session(null));
+    render(<App />);
+    await screen.findByText('Sign in to view services');
+    await settle();
+    expect(requested('/api/user/preferences')).toBe(false);
+  });
+
+  test('switching tabs does not change the synced default tab', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click(screen.getByText('Most Frequent'));
+    await settle();
+    expect(puts()).toHaveLength(1);
+  });
+
+  test('changing the default tab in Config saves it', async () => {
+    installApi(session('admin'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click(screen.getByLabelText('Settings and Preferences'));
+    fireEvent.change(await screen.findByLabelText('Default Tab'), { target: { value: 'all' } });
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 2000 });
+    expect(JSON.parse(String(puts()[1].init!.body)).defaultTab).toBe('all');
+  });
+
+  test('an edit made while the profile is loading wins over the loaded profile', async () => {
+    installApi(session('viewer'), {
+      ...serverPrefs({ services: SERVICES }),
+      '/api/user/preferences': {
+        ...serverPrefs({ services: SERVICES })['/api/user/preferences'],
+        delayMs: { GET: 400 },
+      },
+    });
+    render(<App />);
+
+    // Local state renders immediately; unpin before the profile arrives
+    fireEvent.click((await screen.findAllByTitle('Unpin service'))[0]);
+    await waitFor(() => expect(puts()).toHaveLength(1), { timeout: 2000 });
+
+    const body = JSON.parse(String(puts()[0].init!.body));
+    expect(body.services[0]).toMatchObject({ id: 'imported-jellyfin', isPinned: false });
+    // The loaded profile (still pinned) did not overwrite the local edit
+    await settle();
+    expect(JSON.parse(localStorage.getItem('launchpad_services')!)[0].isPinned).toBe(false);
+  });
+
+  test('saves are sent one at a time, in order', async () => {
+    installApi(session('viewer'), { '/api/user/preferences': { delayMs: { PUT: 900 } } });
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    // An edit made while the first upload is in flight is saved after it, not lost
+    fireEvent.click(screen.getAllByTitle('Unpin service')[0]);
+    await settle();
+    expect(puts()).toHaveLength(1);
+
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 3000 });
+    expect(JSON.parse(String(puts()[1].init!.body)).services[0].isPinned).toBe(false);
   });
 });

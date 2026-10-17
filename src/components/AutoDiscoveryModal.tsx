@@ -48,7 +48,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
 
   const pendingCount = discoveredRoutes.filter((r) => r.status === 'pending').length;
 
-  const handleCustomSubmit = (e: React.FormEvent) => {
+  const handleCustomSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!newHost.trim() || !newName.trim()) return;
 

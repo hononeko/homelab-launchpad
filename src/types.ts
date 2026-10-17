@@ -119,4 +119,26 @@ export interface AuthSession {
 }
 
 export type TabFilter = 'pinned' | 'frequent' | 'all';
+
+export const TAB_FILTERS: readonly TabFilter[] = ['pinned', 'frequent', 'all'];
+
+export type ServiceCategory = ServiceItem['category'];
+
+export const SERVICE_CATEGORIES: readonly ServiceCategory[] = ['MEDIA', 'HOME & LIVING', 'TOOLS & DEV', 'CLUSTER & OPS'];
+
+/** Per-user layout and settings synced through `/api/user/preferences`. */
+export interface UserPreferences {
+  // The user's service catalog; array order is the display order
+  services: ServiceItem[];
+  hiddenCategories: ServiceCategory[];
+  defaultTab: TabFilter;
+  argoEnabled: boolean;
+  autoSyncRoutes: boolean;
+  updatedAt: string | null;
+}
+
+export interface LaunchStats {
+  count: number;
+  lastLaunchedAt: number;
+}
 export type MainView = 'overview' | 'services' | 'gitops' | 'cluster' | 'config';

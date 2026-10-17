@@ -7,7 +7,11 @@ import {
   ClusterNode,
   ServiceHealth,
   AuthSession,
+  SERVICE_CATEGORIES,
+  ServiceCategory,
+  TAB_FILTERS,
   TabFilter,
+  UserPreferences,
   MainView,
 } from './types';
 import {
@@ -27,6 +31,30 @@ import { ClusterModal } from './components/ClusterModal';
 import { ConfigView } from './components/ConfigView';
 import { Footer } from './components/Footer';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { usePreferencesSync } from './hooks/usePreferencesSync';
+
+// Stored and synced values are untrusted: each reader rebuilds the value from
+// known constants instead of passing parsed data through.
+function readStored(key: string): unknown {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved === null ? undefined : JSON.parse(saved);
+  } catch {
+    return undefined;
+  }
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value === true : fallback;
+}
+
+function asTab(value: unknown): TabFilter {
+  return TAB_FILTERS.find((tab) => tab === value) ?? 'pinned';
+}
+
+function asCategories(value: unknown): ServiceCategory[] {
+  return Array.isArray(value) ? SERVICE_CATEGORIES.filter((category) => value.includes(category)) : [];
+}
 
 export default function App() {
   // Persistence state
@@ -55,15 +83,11 @@ export default function App() {
   const [argoApps, setArgoApps] = useState<ArgoApplication[]>(INITIAL_ARGO_APPS);
   const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(INITIAL_DISCOVERED_ROUTES);
 
-  const [argoEnabled, setArgoEnabled] = useState<boolean>(() => {
-    const saved = localStorage.getItem('kerrlab_argo_enabled');
-    return saved !== null ? JSON.parse(saved) : true;
-  });
+  const [argoEnabled, setArgoEnabled] = useState<boolean>(() => asBoolean(readStored('kerrlab_argo_enabled'), true));
 
-  const [autoSyncRoutes, setAutoSyncRoutes] = useState<boolean>(() => {
-    const saved = localStorage.getItem('kerrlab_autosync_routes');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
+  const [autoSyncRoutes, setAutoSyncRoutes] = useState<boolean>(() =>
+    asBoolean(readStored('kerrlab_autosync_routes'), false)
+  );
 
   const [telemetry, setTelemetry] = useState<ClusterTelemetry>(INITIAL_TELEMETRY);
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>(INITIAL_NODES);
@@ -71,7 +95,12 @@ export default function App() {
 
   // UI state
   const [currentView, setCurrentView] = useState<MainView>('overview');
-  const [activeTab, setActiveTab] = useState<TabFilter>('pinned');
+  // The default tab is a synced preference; switching tabs does not change it
+  const [defaultTab, setDefaultTab] = useState<TabFilter>(() => asTab(readStored('launchpad_default_tab')));
+  const [activeTab, setActiveTab] = useState<TabFilter>(defaultTab);
+  const [hiddenCategories, setHiddenCategories] = useState<ServiceCategory[]>(() =>
+    asCategories(readStored('launchpad_hidden_categories'))
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAutoDiscoveryOpen, setIsAutoDiscoveryOpen] = useState(false);
@@ -250,14 +279,35 @@ export default function App() {
     };
   }, [isAuthenticated, isAdmin]);
 
+  // Settings follow the signed-in user across devices; localStorage stays as the offline cache
+  const syncedSettings = useMemo(
+    () => ({ services, hiddenCategories, defaultTab, argoEnabled, autoSyncRoutes }),
+    [services, hiddenCategories, defaultTab, argoEnabled, autoSyncRoutes]
+  );
+  const { syncState, persisted, recordLaunch } = usePreferencesSync({
+    enabled: isAuthenticated,
+    settings: syncedSettings,
+    apply: (prefs: UserPreferences) => {
+      setServices(prefs.services);
+      setHiddenCategories(asCategories(prefs.hiddenCategories));
+      setDefaultTab(asTab(prefs.defaultTab));
+      setActiveTab(asTab(prefs.defaultTab));
+      setArgoEnabled(asBoolean(prefs.argoEnabled, true));
+      setAutoSyncRoutes(asBoolean(prefs.autoSyncRoutes, false));
+    },
+  });
+
   // Viewers only see services in the categories they are authorized for, and
-  // nothing is shown until the session confirms a signed-in user
+  // nothing is shown until the session confirms a signed-in user. Categories
+  // the user hid are left out for everyone.
   const visibleServices = useMemo(() => {
     if (!session?.authenticated) return [];
-    if (isAdmin) return services;
+    const hidden = new Set(hiddenCategories);
+    const shown = services.filter((s) => !hidden.has(s.category));
+    if (isAdmin) return shown;
     const allowed = new Set(session.viewerCategories);
-    return services.filter((s) => allowed.has(s.category));
-  }, [services, session, isAdmin]);
+    return shown.filter((s) => allowed.has(s.category));
+  }, [services, session, isAdmin, hiddenCategories]);
 
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
@@ -290,18 +340,27 @@ export default function App() {
     return () => clearInterval(timer);
   }, [probeUrlsKey, isAuthenticated]);
 
-  // Sync to localStorage
+  // Sync to localStorage; values are re-validated at the write so nothing
+  // unexpected is ever persisted
   useEffect(() => {
     localStorage.setItem('launchpad_services', JSON.stringify(services));
   }, [services]);
 
   useEffect(() => {
-    localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(argoEnabled));
+    localStorage.setItem('kerrlab_argo_enabled', JSON.stringify(asBoolean(argoEnabled, true)));
   }, [argoEnabled]);
 
   useEffect(() => {
-    localStorage.setItem('kerrlab_autosync_routes', JSON.stringify(autoSyncRoutes));
+    localStorage.setItem('kerrlab_autosync_routes', JSON.stringify(asBoolean(autoSyncRoutes, false)));
   }, [autoSyncRoutes]);
+
+  useEffect(() => {
+    localStorage.setItem('launchpad_hidden_categories', JSON.stringify(asCategories(hiddenCategories)));
+  }, [hiddenCategories]);
+
+  useEffect(() => {
+    localStorage.setItem('launchpad_default_tab', JSON.stringify(asTab(defaultTab)));
+  }, [defaultTab]);
 
   // Global keydown handler for ⌘K and /
   useEffect(() => {
@@ -373,6 +432,18 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
     showToast(`Launching ${service.name} (${service.displayUrl})`);
     window.open(safeUrl, '_blank', 'noopener,noreferrer');
+
+    // The optimistic count above is replaced by the server's atomic counter
+    void recordLaunch(service.id).then((stats) => {
+      if (!stats) return;
+      setServices((prev) =>
+        prev.map((s) =>
+          s.id === service.id
+            ? { ...s, launchesPerWeek: stats.count, lastAccessedTimestamp: stats.lastLaunchedAt }
+            : s
+        )
+      );
+    });
   };
 
   // Toggle service pin
@@ -1080,6 +1151,16 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
               onResetToDefaults={handleResetToDefaults}
               totalServicesCount={visibleServices.length}
               totalRoutesCount={discoveredRoutes.length}
+              hiddenCategories={hiddenCategories}
+              onToggleCategory={(category) =>
+                setHiddenCategories((prev) =>
+                  prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]
+                )
+              }
+              defaultTab={defaultTab}
+              onChangeDefaultTab={(tab) => setDefaultTab(asTab(tab))}
+              syncState={syncState}
+              persisted={persisted}
             />
           )}
         </div>

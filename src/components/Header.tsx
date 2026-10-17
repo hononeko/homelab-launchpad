@@ -64,14 +64,11 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-2 text-left focus:outline-none group"
             title="Homelab Launchpad"
           >
-            <div className="h-8 w-8 rounded-lg bg-[#0E1117] border border-[#1C212B] p-1 flex items-center justify-center overflow-hidden group-hover:border-[#67df70]/50 transition-colors">
-              <img
-                alt="Kerrlab Logo"
-                className="h-6 w-auto object-contain"
-                src="https://lh3.googleusercontent.com/aida/AEtjO1XrzS6X4beHj6GL_Ab4ZThssdJTHptiBONe-EuVvL3lv3JUs6HrztXn2K9XN_XLaoPeVUgVpCY0hWsuqPs8t9dsn5yYYblv0OZ4PkCORez8sOJtUQahEia8f6SNr7lCD6QH_-IVa6fJ3aVy9gwTaqOQsrj4wUkNaLmIazVsER5lhmC5IBgszagi8omox-Fvt6Xx1UcVDlJLDfdLDiPAwZHj340OOyVR0CIvUqJs-0zxr-Ulx2NCm-2BfpS2"
-                referrerPolicy="no-referrer"
-              />
-            </div>
+            <img
+              alt="Kerrlab Logo"
+              className="h-8 w-8 rounded-lg ring-1 ring-transparent group-hover:ring-[#67df70]/50 transition-shadow"
+              src="/logo-mark.png"
+            />
             <span className="font-semibold text-[16px] tracking-tight text-white group-hover:text-[#67df70] transition-colors">
               Kerrlab
             </span>

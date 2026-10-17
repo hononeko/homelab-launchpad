@@ -50,12 +50,12 @@ describe('security middleware', () => {
   });
 
   test('answers CORS preflight only with the allowed methods', async () => {
-    const res = await fetch(`${baseUrl}/api/routes/scan`, {
+    const res = await fetch(`${baseUrl}/api/user/preferences`, {
       method: 'OPTIONS',
-      headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST' },
+      headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'PUT' },
     });
     expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-methods')).toBe('GET,POST');
+    expect(res.headers.get('access-control-allow-methods')).toBe('GET,POST,PUT');
   });
 
   test('does not serve the frontend outside production', async () => {
