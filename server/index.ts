@@ -4,11 +4,12 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import { apiRouter, broadcastTelemetry } from './routes/api';
+import { apiRouter, broadcastServiceHealth, broadcastTelemetry } from './routes/api';
 import { getK8sClient } from './k8s/client';
 import { scanClusterRoutes } from './k8s/discovery';
 import { fetchArgoApplications } from './k8s/argo';
 import { fetchClusterTelemetry } from './k8s/telemetry';
+import { getProbeConfig, startHealthProbeScheduler } from './health/probe';
 
 dotenv.config();
 
@@ -106,6 +107,13 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Homelab Launchpad Backend Server`);
   console.log(`  Listening on: http://0.0.0.0:${PORT}`);
   console.log(`==================================================\n`);
+
+  // Service health probes run independently of cluster connectivity
+  const probeConfig = getProbeConfig();
+  startHealthProbeScheduler(broadcastServiceHealth);
+  console.log(
+    `[Server] Service health probes every ${probeConfig.intervalMs}ms (timeout ${probeConfig.timeoutMs}ms, domains: ${probeConfig.allowedDomains.join(', ') || 'discovered routes only'})`
+  );
 
   // Initialize K8s client and warm up route & argo cache
   const client = getK8sClient();

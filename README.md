@@ -66,29 +66,50 @@ For the full architectural specification, see [ARCHITECTURE.md](docs/ARCHITECTUR
 ## Getting Started (Local Development)
 
 ### Prerequisites
-- Node.js (v20+ recommended)
-- npm (v10+)
+- Docker
+- [Dev Container CLI](https://github.com/devcontainers/cli) (or VS Code Dev Containers)
+
+All dependency installs, builds, and repo scripts run inside the dev container
+(`.devcontainer/`), never on the host. The container runs as an unprivileged user
+with all Linux capabilities dropped, `no-new-privileges`, no Docker socket, and
+`node_modules` kept in a named volume.
 
 ### Setup
-1. Clone repository and install dependencies:
+1. Start the dev container (installs dependencies with `--ignore-scripts`):
    ```bash
-   npm install
+   devcontainer up --workspace-folder .
    ```
-2. Start local Vite development server:
+2. Start the backend and the Vite dev server:
    ```bash
-   npm run dev
+   devcontainer exec --workspace-folder . bun run server
+   devcontainer exec --workspace-folder . bun run dev
    ```
    The application will be accessible at `http://localhost:3000`.
 
-3. Typecheck and lint:
+3. Typecheck, unit tests, and production build:
    ```bash
-   npm run lint
+   devcontainer exec --workspace-folder . bun run lint
+   devcontainer exec --workspace-folder . bun run test:unit
+   devcontainer exec --workspace-folder . bun run build
    ```
 
-4. Build production bundle:
-   ```bash
-   npm run build
-   ```
+### Service Health Probes
+
+The backend probes every service URL registered by the dashboard (HEAD, falling back
+to GET on 405/501) and streams results over SSE (`health:updated`). Any response
+below 500, including Authelia redirects and 401/403, counts as reachable; 5xx is
+`degraded`; connection, DNS, and timeout failures are `offline`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `HEALTH_PROBE_INTERVAL_MS` | `30000` | Interval between background probe rounds |
+| `HEALTH_PROBE_TIMEOUT_MS` | `3000` | Per-request timeout |
+| `HEALTH_PROBE_CONCURRENCY` | `8` | Maximum simultaneous probes |
+| `HEALTH_PROBE_ALLOWED_DOMAINS` | `kerrlab.app` | Comma-separated domains (and subdomains) that may be probed; `*` allows any host. Hosts of discovered HTTPRoutes are always allowed. |
+| `HEALTH_PROBE_INSECURE_TLS` | `false` | Skip TLS certificate verification (internal CAs) |
+
+Endpoints: `GET /api/services/health`, `POST /api/services/health/targets` (`{ "urls": [...] }`),
+`POST /api/services/health/probe` (on-demand, throttled to once per 5s).
 
 ---
 

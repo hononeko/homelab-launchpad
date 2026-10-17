@@ -81,5 +81,25 @@ export interface ClusterNode {
   version: string;
 }
 
-export type TabFilter = 'pinned' | 'frequent' | 'all';
+export type ProbeStatus = 'active' | 'degraded' | 'offline';
+
+export interface ProbeTimings {
+  dnsMs: number | null;
+  connectMs: number | null;
+  tlsMs: number | null;
+  ttfbMs: number | null;
+  totalMs: number;
+}
+
+export interface ServiceHealth {
+  url: string;
+  status: ProbeStatus;
+  httpStatus: number | null;
+  latencyMs: number | null;
+  timings: ProbeTimings | null;
+  error: string | null;
+  checkedAt: string;
+}
+
+export type TabFilter ='pinned' | 'frequent' | 'all';
 export type MainView = 'overview' | 'services' | 'gitops' | 'cluster' | 'config';

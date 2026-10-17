@@ -1,9 +1,10 @@
 import React from 'react';
-import { ServiceItem, ArgoApplication } from '../types';
+import { ServiceItem, ArgoApplication, ServiceHealth } from '../types';
 
 interface ServiceCardProps {
   service: ServiceItem;
   argoApp?: ArgoApplication;
+  health?: ServiceHealth;
   showArgoIntegration?: boolean;
   onTogglePin: (id: string, e: React.MouseEvent) => void;
   onLaunch: (service: ServiceItem) => void;
@@ -12,6 +13,7 @@ interface ServiceCardProps {
 export const ServiceCard: React.FC<ServiceCardProps> = ({
   service,
   argoApp,
+  health,
   showArgoIntegration = true,
   onTogglePin,
   onLaunch,
@@ -29,9 +31,32 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   const isArgoSynced = argoApp?.syncStatus === 'Synced';
   const isArgoSyncing = argoApp?.syncStatus === 'Syncing';
 
-  let statusLabel = service.status === 'synced' ? 'Synced' : service.status === 'active' ? 'Active' : 'Used';
+  // Live probe results take precedence over the stored service status
+  const effectiveStatus = health?.status ?? service.status;
+  const isUnhealthy = effectiveStatus === 'offline' || effectiveStatus === 'degraded';
+  const latencyMs = health ? health.latencyMs : service.latencyMs;
+
+  let statusLabel = effectiveStatus === 'synced' ? 'Synced' : effectiveStatus === 'active' ? 'Active' : 'Used';
   if (showArgoIntegration && argoApp) {
     statusLabel = argoApp.syncStatus;
+  }
+  // Reachability problems outrank GitOps sync state
+  if (effectiveStatus === 'offline') statusLabel = 'Offline';
+  if (effectiveStatus === 'degraded') statusLabel = 'Degraded';
+
+  let dotClass = 'bg-[#64748B]';
+  if (effectiveStatus === 'offline') dotClass = 'bg-red-500';
+  else if (effectiveStatus === 'degraded') dotClass = 'bg-amber-400';
+  else if (isArgoSyncing) dotClass = 'bg-amber-400 animate-ping';
+  else if (isArgoSynced || effectiveStatus === 'active' || effectiveStatus === 'synced') dotClass = 'bg-[#67df70]';
+
+  let healthTitle: string | undefined;
+  if (health) {
+    const t = health.timings;
+    const detail = t
+      ? `HTTP ${health.httpStatus} • DNS ${t.dnsMs ?? '–'}ms • TCP ${t.connectMs ?? '–'}ms • TLS ${t.tlsMs ?? '–'}ms • TTFB ${t.ttfbMs ?? '–'}ms`
+      : `Unreachable (${health.error ?? 'unknown error'})`;
+    healthTitle = `${detail}\nChecked ${new Date(health.checkedAt).toLocaleTimeString()}`;
   }
 
   return (
@@ -89,22 +114,14 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
 
       {/* Bottom Telemetry & Launch Count */}
       <div className="flex items-center justify-between pt-2.5 border-t border-[#1C212B] font-mono text-[11px] text-[#64748B]">
-        <div className="flex items-center gap-1.5">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              isArgoSyncing
-                ? 'bg-amber-400 animate-ping'
-                : isArgoSynced || service.status === 'active' || service.status === 'synced'
-                ? 'bg-[#67df70]'
-                : 'bg-[#64748B]'
-            }`}
-          ></span>
-          <span className="text-[#94A3B8]">
+        <div className="flex items-center gap-1.5" title={healthTitle}>
+          <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`}></span>
+          <span className={isUnhealthy ? (effectiveStatus === 'offline' ? 'text-red-400' : 'text-amber-400') : 'text-[#94A3B8]'}>
             {statusLabel} • {service.lastAccessed}
           </span>
-          {service.latencyMs !== undefined && (
+          {latencyMs !== undefined && latencyMs !== null && (
             <span className="text-[#64748B] hidden sm:inline">
-              ({service.latencyMs}ms)
+              ({latencyMs}ms)
             </span>
           )}
         </div>
