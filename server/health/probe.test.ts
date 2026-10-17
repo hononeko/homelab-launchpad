@@ -138,6 +138,13 @@ describe('probeUrl', () => {
     expect(result.latencyMs).toBeNull();
   });
 
+  test('refuses to send requests to hosts outside the allowlist', async () => {
+    const result = await probeUrl(new URL(`${baseUrl}/ok`), { ...config, allowedDomains: ['kerrlab.app'] });
+    expect(result.status).toBe('offline');
+    expect(result.error).toBe('EPROBENOTALLOWED');
+    expect(seenMethods).toEqual([]);
+  });
+
   test('marks refused connections offline', async () => {
     const closed = http.createServer();
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));

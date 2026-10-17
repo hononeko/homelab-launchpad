@@ -50,14 +50,17 @@ export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[]): URL
   } catch {
     return null;
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-  if (parsed.username || parsed.password) return null;
+  return isAllowedProbeTarget(parsed, allowedDomains) ? parsed : null;
+}
 
-  const host = parsed.hostname.toLowerCase();
-  if (allowedDomains.includes('*')) return parsed;
-  if (allowedDomains.some((d) => host === d || host.endsWith(`.${d}`))) return parsed;
-  if (getCachedRoutes().some((r) => r.host.toLowerCase() === host)) return parsed;
-  return null;
+export function isAllowedProbeTarget(url: URL, allowedDomains: string[]): boolean {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+
+  const host = url.hostname.toLowerCase();
+  if (allowedDomains.includes('*')) return true;
+  if (allowedDomains.some((d) => host === d || host.endsWith(`.${d}`))) return true;
+  return getCachedRoutes().some((r) => r.host.toLowerCase() === host);
 }
 
 export function classifyHttpStatus(code: number): ProbeStatus {
@@ -76,13 +79,24 @@ function roundMs(value: number): number {
 }
 
 function sanitizeError(err: unknown): string {
-  const code = (err as NodeJS.ErrnoException)?.code;
-  const message = code || (err as Error)?.message || String(err);
+  let message = 'unknown error';
+  if (err instanceof Error) {
+    message = (err as NodeJS.ErrnoException).code || err.message;
+  } else if (typeof err === 'string') {
+    message = err;
+  }
   return message.replace(/[\r\n]/g, '').slice(0, 120);
 }
 
 function requestOnce(url: URL, method: 'HEAD' | 'GET', config: ProbeConfig): Promise<RawProbe> {
   return new Promise((resolve, reject) => {
+    // Re-check at request time: the allowlist or discovered routes may have
+    // changed since the target was registered.
+    if (!isAllowedProbeTarget(url, config.allowedDomains)) {
+      reject(Object.assign(new Error('target not allowed'), { code: 'EPROBENOTALLOWED' }));
+      return;
+    }
+
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? https : http;
     const start = performance.now();
@@ -261,13 +275,13 @@ function pruneExpiredTargets(now: number) {
 
 async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
   let index = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (index < items.length) {
-      const item = items[index++];
-      await worker(item);
-    }
-  });
-  await Promise.all(runners);
+  // Each runner takes the next item when its previous one settles
+  const next = (): Promise<void> => {
+    if (index >= items.length) return Promise.resolve();
+    const item = items[index++];
+    return worker(item).then(next);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
 }
 
 async function executeRound(keys?: string[]): Promise<void> {
@@ -296,7 +310,7 @@ async function executeRound(keys?: string[]): Promise<void> {
  * is given, only those targets are probed (used for newly registered targets).
  */
 export function runProbeRound(keys?: string[]): Promise<void> {
-  if (roundInFlight) {
+  if (roundInFlight !== null) {
     // A targeted request may include keys the in-flight round did not select
     return keys ? roundInFlight.then(() => runProbeRound(keys)) : roundInFlight;
   }
@@ -308,7 +322,7 @@ export function runProbeRound(keys?: string[]): Promise<void> {
 
 /** On-demand probe of all targets, throttled to avoid hammering services. */
 export async function requestProbeRound(): Promise<{ throttled: boolean }> {
-  if (!roundInFlight && Date.now() - lastRoundStartedMs < ON_DEMAND_MIN_SPACING_MS) {
+  if (roundInFlight === null && Date.now() - lastRoundStartedMs < ON_DEMAND_MIN_SPACING_MS) {
     return { throttled: true };
   }
   await runProbeRound();

@@ -309,7 +309,7 @@ apiRouter.post('/services/health/probe', async (_req: Request, res: Response) =>
     const { throttled } = await requestProbeRound();
     res.json({ success: true, throttled, ...getHealthSnapshot() });
   } catch (error: any) {
-    const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
+    const safeErr = String((error as Error)?.message || error).replace(/[\n\r]/g, '');
     console.error('[API] /services/health/probe error: %s', safeErr);
     res.status(500).json({ success: false, error: 'Failed to probe services' });
   }

@@ -226,7 +226,7 @@ export default function App() {
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
   const probeUrlsKey = useMemo(
-    () => JSON.stringify([...new Set(services.map((s) => s.url))].sort()),
+    () => JSON.stringify([...new Set<string>(services.map((s) => s.url))].sort((a, b) => a.localeCompare(b))),
     [services]
   );
 
