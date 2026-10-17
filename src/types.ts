@@ -101,5 +101,22 @@ export interface ServiceHealth {
   checkedAt: string;
 }
 
-export type TabFilter ='pinned' | 'frequent' | 'all';
+export type UserRole = 'admin' | 'viewer';
+
+export interface AuthUser {
+  username: string;
+  name: string | null;
+  email: string | null;
+  groups: string[];
+  role: UserRole;
+}
+
+export interface AuthSession {
+  authenticated: boolean;
+  mode: 'forward-auth' | 'none';
+  user: AuthUser | null;
+  viewerCategories: string[];
+}
+
+export type TabFilter = 'pinned' | 'frequent' | 'all';
 export type MainView = 'overview' | 'services' | 'gitops' | 'cluster' | 'config';

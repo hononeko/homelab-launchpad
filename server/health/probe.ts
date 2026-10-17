@@ -12,7 +12,9 @@ export interface ProbeConfig {
   insecureTls: boolean;
 }
 
-export const MAX_TARGETS = 200;
+export const MAX_TARGETS = 300;
+// Per-user quota so one user cannot exhaust the shared target list
+export const MAX_TARGETS_PER_REGISTRANT = 100;
 // Targets not re-registered by any client within this window are dropped
 const TARGET_TTL_MS = 30 * 60 * 1000;
 // Minimum spacing between on-demand probe rounds
@@ -42,7 +44,7 @@ export function getProbeConfig(): ProbeConfig {
  * whose host is on the allowlist or belongs to a discovered cluster route, may be
  * probed, so the endpoint cannot be used as a generic SSRF / port-scan oracle.
  */
-export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[]): URL | null {
+export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[], allowClusterRoutes = true): URL | null {
   if (typeof rawUrl !== 'string' || rawUrl.length > 2048) return null;
   let parsed: URL;
   try {
@@ -50,17 +52,21 @@ export function parseProbeTarget(rawUrl: unknown, allowedDomains: string[]): URL
   } catch {
     return null;
   }
-  return isAllowedProbeTarget(parsed, allowedDomains) ? parsed : null;
+  return isAllowedProbeTarget(parsed, allowedDomains, allowClusterRoutes) ? parsed : null;
 }
 
-export function isAllowedProbeTarget(url: URL, allowedDomains: string[]): boolean {
+/**
+ * Hosts of discovered cluster routes are allowed when `allowClusterRoutes` is
+ * set; callers disable it for non-administrators, who may not see those routes.
+ */
+export function isAllowedProbeTarget(url: URL, allowedDomains: string[], allowClusterRoutes = true): boolean {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
   if (url.username || url.password) return false;
 
   const host = url.hostname.toLowerCase();
   if (allowedDomains.includes('*')) return true;
   if (allowedDomains.some((d) => host === d || host.endsWith(`.${d}`))) return true;
-  return getCachedRoutes().some((r) => r.host.toLowerCase() === host);
+  return allowClusterRoutes && getCachedRoutes().some((r) => r.host.toLowerCase() === host);
 }
 
 export function classifyHttpStatus(code: number): ProbeStatus {
@@ -202,7 +208,9 @@ export async function probeUrl(url: URL, config: ProbeConfig = getProbeConfig())
 
 interface ProbeTarget {
   url: URL;
-  lastRegisteredAt: number;
+  // Registrant (username) -> last time they registered this URL. Results are
+  // only visible to registrants, so users cannot enumerate each other's services.
+  registrants: Map<string, number>;
 }
 
 // Keyed by the exact URL string the client registered, so clients can look up
@@ -213,7 +221,7 @@ let lastProbedAt: string | null = null;
 let lastRoundStartedMs = 0;
 let roundInFlight: Promise<void> | null = null;
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
-let onRoundComplete: ((snapshot: HealthSnapshot) => void) | null = null;
+let onRoundComplete: (() => void) | null = null;
 
 export interface HealthSnapshot {
   results: Record<string, ServiceHealth>;
@@ -222,12 +230,24 @@ export interface HealthSnapshot {
   targetCount: number;
 }
 
-export function getHealthSnapshot(): HealthSnapshot {
+/**
+ * Returns probe results. With a registrant, only the targets that registrant
+ * registered are included; without one (administrators), all targets are.
+ */
+export function getHealthSnapshot(registrant?: string): HealthSnapshot {
+  const visibleKeys = [...targets.entries()]
+    .filter(([, target]) => registrant === undefined || target.registrants.has(registrant))
+    .map(([key]) => key);
+  const visibleResults: Record<string, ServiceHealth> = {};
+  for (const key of visibleKeys) {
+    const result = results.get(key);
+    if (result) visibleResults[key] = result;
+  }
   return {
-    results: Object.fromEntries(results),
+    results: visibleResults,
     lastProbedAt,
     intervalMs: getProbeConfig().intervalMs,
-    targetCount: targets.size,
+    targetCount: visibleKeys.length,
   };
 }
 
@@ -236,28 +256,47 @@ export interface RegisterResult {
   rejected: string[];
 }
 
-export function registerTargets(rawUrls: unknown[]): RegisterResult {
+export interface RegisterOptions {
+  allowClusterRoutes: boolean;
+}
+
+export function registerTargets(
+  rawUrls: unknown[],
+  registrant: string,
+  { allowClusterRoutes }: RegisterOptions = { allowClusterRoutes: false }
+): RegisterResult {
   const { allowedDomains } = getProbeConfig();
   const now = Date.now();
   const accepted: string[] = [];
   const rejected: string[] = [];
+  let registrantCount = [...targets.values()].filter((t) => t.registrants.has(registrant)).length;
 
   for (const raw of rawUrls) {
-    const parsed = parseProbeTarget(raw, allowedDomains);
+    const parsed = parseProbeTarget(raw, allowedDomains, allowClusterRoutes);
     if (!parsed) {
       if (typeof raw === 'string') rejected.push(raw.slice(0, 256));
       continue;
     }
     const key = raw as string;
     const existing = targets.get(key);
+    if (existing?.registrants.has(registrant)) {
+      existing.registrants.set(registrant, now);
+      accepted.push(key);
+      continue;
+    }
+    if (registrantCount >= MAX_TARGETS_PER_REGISTRANT) {
+      rejected.push(key.slice(0, 256));
+      continue;
+    }
     if (existing) {
-      existing.lastRegisteredAt = now;
+      existing.registrants.set(registrant, now);
     } else if (targets.size < MAX_TARGETS) {
-      targets.set(key, { url: parsed, lastRegisteredAt: now });
+      targets.set(key, { url: parsed, registrants: new Map([[registrant, now]]) });
     } else {
       rejected.push(key.slice(0, 256));
       continue;
     }
+    registrantCount++;
     accepted.push(key);
   }
 
@@ -266,7 +305,10 @@ export function registerTargets(rawUrls: unknown[]): RegisterResult {
 
 function pruneExpiredTargets(now: number) {
   for (const [key, target] of targets) {
-    if (now - target.lastRegisteredAt > TARGET_TTL_MS) {
+    for (const [registrant, registeredAt] of target.registrants) {
+      if (now - registeredAt > TARGET_TTL_MS) target.registrants.delete(registrant);
+    }
+    if (target.registrants.size === 0) {
       targets.delete(key);
       results.delete(key);
     }
@@ -302,7 +344,7 @@ async function executeRound(keys?: string[]): Promise<void> {
   });
 
   lastProbedAt = new Date().toISOString();
-  onRoundComplete?.(getHealthSnapshot());
+  onRoundComplete?.();
 }
 
 /**
@@ -329,7 +371,7 @@ export async function requestProbeRound(): Promise<{ throttled: boolean }> {
   return { throttled: false };
 }
 
-export function startHealthProbeScheduler(onComplete: (snapshot: HealthSnapshot) => void): void {
+export function startHealthProbeScheduler(onComplete: () => void): void {
   if (schedulerTimer) return;
   onRoundComplete = onComplete;
   const { intervalMs } = getProbeConfig();

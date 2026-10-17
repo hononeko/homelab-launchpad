@@ -10,6 +10,7 @@ import { scanClusterRoutes } from './k8s/discovery';
 import { fetchArgoApplications } from './k8s/argo';
 import { fetchClusterTelemetry } from './k8s/telemetry';
 import { getProbeConfig, startHealthProbeScheduler } from './health/probe';
+import { getAuthConfig } from './auth/forwardAuth';
 
 dotenv.config();
 
@@ -107,6 +108,23 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Homelab Launchpad Backend Server`);
   console.log(`  Listening on: http://0.0.0.0:${PORT}`);
   console.log(`==================================================\n`);
+
+  const authConfig = getAuthConfig();
+  if (authConfig.mode === 'none') {
+    console.warn('[Auth] AUTH_MODE=none: every request is treated as an administrator.');
+  } else {
+    console.log(`[Auth] Authelia forward-auth enabled (admin groups: ${authConfig.adminGroups.join(', ')})`);
+    if (authConfig.trustedProxies === 'none') {
+      console.error(
+        "[Auth] AUTH_TRUSTED_PROXIES is not set: identity headers are ignored and every user is signed out. Set the gateway IPs/CIDRs, or '*' if a NetworkPolicy restricts ingress to the gateway."
+      );
+    } else if (authConfig.trustedProxies === 'any') {
+      console.warn('[Auth] Identity headers are trusted from any peer (AUTH_TRUSTED_PROXIES unset in development, or "*").');
+    }
+    if (authConfig.devUser) {
+      console.warn(`[Auth] Development identity active for requests without headers: ${authConfig.devUser.username}`);
+    }
+  }
 
   // Service health probes run independently of cluster connectivity
   const probeConfig = getProbeConfig();

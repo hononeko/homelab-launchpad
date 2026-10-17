@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import {
   classifyHttpStatus,
   getHealthSnapshot,
+  MAX_TARGETS_PER_REGISTRANT,
   parseProbeTarget,
   probeUrl,
   ProbeConfig,
@@ -163,7 +164,7 @@ describe('probe scheduler', () => {
     const okUrl = `${baseUrl}/ok`;
     const brokenUrl = `${baseUrl}/broken`;
 
-    const { accepted, rejected } = registerTargets([okUrl, brokenUrl, 'https://example.com', 7]);
+    const { accepted, rejected } = registerTargets([okUrl, brokenUrl, 'https://example.com', 7], 'alice');
     expect(accepted).toEqual([okUrl, brokenUrl]);
     expect(rejected).toEqual(['https://example.com']);
 
@@ -178,9 +179,34 @@ describe('probe scheduler', () => {
 
   test('targeted rounds only probe the requested targets', async () => {
     process.env.HEALTH_PROBE_ALLOWED_DOMAINS = '127.0.0.1';
-    registerTargets([`${baseUrl}/ok`, `${baseUrl}/forbidden`]);
+    registerTargets([`${baseUrl}/ok`, `${baseUrl}/forbidden`], 'alice');
 
     await runProbeRound([`${baseUrl}/forbidden`]);
     expect(Object.keys(getHealthSnapshot().results)).toEqual([`${baseUrl}/forbidden`]);
+  });
+
+  test('enforces a per-user target quota without blocking other users', () => {
+    process.env.HEALTH_PROBE_ALLOWED_DOMAINS = '127.0.0.1';
+    const urls = Array.from({ length: MAX_TARGETS_PER_REGISTRANT }, (_, i) => `http://127.0.0.1:1/${i}`);
+    expect(registerTargets(urls, 'alice').accepted).toHaveLength(MAX_TARGETS_PER_REGISTRANT);
+
+    // Over quota for new URLs, but re-registering existing ones still refreshes them
+    expect(registerTargets(['http://127.0.0.1:1/extra'], 'alice').rejected).toEqual(['http://127.0.0.1:1/extra']);
+    expect(registerTargets([urls[0]], 'alice').accepted).toEqual([urls[0]]);
+
+    expect(registerTargets(['http://127.0.0.1:1/extra'], 'bob').accepted).toEqual(['http://127.0.0.1:1/extra']);
+    expect(registerTargets([urls[0]], 'bob').accepted).toEqual([urls[0]]);
+  });
+
+  test('results are only visible to the users who registered the target', async () => {
+    process.env.HEALTH_PROBE_ALLOWED_DOMAINS = '127.0.0.1';
+    registerTargets([`${baseUrl}/ok`], 'alice');
+    registerTargets([`${baseUrl}/forbidden`], 'bob');
+    await runProbeRound();
+
+    expect(Object.keys(getHealthSnapshot('alice').results)).toEqual([`${baseUrl}/ok`]);
+    expect(Object.keys(getHealthSnapshot('bob').results)).toEqual([`${baseUrl}/forbidden`]);
+    expect(getHealthSnapshot('mallory').targetCount).toBe(0);
+    expect(getHealthSnapshot().targetCount).toBe(2);
   });
 });

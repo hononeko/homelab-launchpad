@@ -6,6 +6,7 @@ import {
   ClusterTelemetry,
   ClusterNode,
   ServiceHealth,
+  AuthSession,
   TabFilter,
   MainView,
 } from './types';
@@ -90,60 +91,86 @@ export default function App() {
     mode: 'simulation',
   });
 
+  // Signed-in user from Authelia forward-auth (or anonymous admin when auth is disabled)
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const isAuthenticated = session?.authenticated ?? false;
+  const isAdmin = session?.user?.role === 'admin';
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) {
+          setSession({
+            authenticated: data.authenticated,
+            mode: data.mode,
+            user: data.user,
+            viewerCategories: data.viewerCategories ?? [],
+          });
+        }
+      })
+      .catch((err) => console.warn('[App] Session fetch error:', err));
+  }, []);
+
   // Fetch initial routes & ArgoCD applications from backend and subscribe to SSE stream
   useEffect(() => {
-    // 1. Fetch health & connection status
-    fetch('/api/health')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.k8s) {
-          setK8sStatus({
-            connected: data.k8s.connected,
-            server: data.k8s.server,
-            mode: data.k8s.mode,
-          });
-        }
-      })
-      .catch((err) => console.warn('[App] Healthcheck error:', err));
+    if (!isAuthenticated) return;
 
-    // 2. Fetch discovered routes
-    fetch('/api/routes')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) {
-          setDiscoveredRoutes((prev) => {
-            const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
-            return data.routes.map((r: DiscoveredHTTPRoute) => ({
-              ...r,
-              status: importedSet.has(r.id) ? 'imported' : r.status,
-            }));
-          });
-        }
-      })
-      .catch((err) => console.warn('[App] Initial routes fetch error:', err));
-
-    // 3. Fetch ArgoCD applications
-    fetch('/api/argo/applications')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.success && Array.isArray(data.applications) && data.applications.length > 0) {
-          setArgoApps(data.applications);
-        }
-      })
-      .catch((err) => console.warn('[App] Initial argo apps fetch error:', err));
-
-    // 4. Fetch cluster telemetry & nodes
-    fetch('/api/telemetry')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.success && data.telemetry) {
-          setTelemetry(data.telemetry);
-          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
-            setClusterNodes(data.nodes);
+    // Cluster, route, and GitOps data is only available to administrators
+    if (isAdmin) {
+      // 1. Fetch health & connection status
+      fetch('/api/health')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.k8s) {
+            setK8sStatus({
+              connected: data.k8s.connected,
+              server: data.k8s.server,
+              mode: data.k8s.mode,
+            });
           }
-        }
-      })
-      .catch((err) => console.warn('[App] Initial telemetry fetch error:', err));
+        })
+        .catch((err) => console.warn('[App] Healthcheck error:', err));
+
+      // 2. Fetch discovered routes
+      fetch('/api/routes')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) {
+            setDiscoveredRoutes((prev) => {
+              const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
+              return data.routes.map((r: DiscoveredHTTPRoute) => ({
+                ...r,
+                status: importedSet.has(r.id) ? 'imported' : r.status,
+              }));
+            });
+          }
+        })
+        .catch((err) => console.warn('[App] Initial routes fetch error:', err));
+
+      // 3. Fetch ArgoCD applications
+      fetch('/api/argo/applications')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && Array.isArray(data.applications) && data.applications.length > 0) {
+            setArgoApps(data.applications);
+          }
+        })
+        .catch((err) => console.warn('[App] Initial argo apps fetch error:', err));
+
+      // 4. Fetch cluster telemetry & nodes
+      fetch('/api/telemetry')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && data.telemetry) {
+            setTelemetry(data.telemetry);
+            if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+              setClusterNodes(data.nodes);
+            }
+          }
+        })
+        .catch((err) => console.warn('[App] Initial telemetry fetch error:', err));
+    }
 
     // 5. Connect to SSE stream for live updates
     let eventSource: EventSource | null = null;
@@ -221,18 +248,27 @@ export default function App() {
     return () => {
       eventSource?.close();
     };
-  }, []);
+  }, [isAuthenticated, isAdmin]);
+
+  // Viewers only see services in the categories they are authorized for, and
+  // nothing is shown until the session confirms a signed-in user
+  const visibleServices = useMemo(() => {
+    if (!session?.authenticated) return [];
+    if (isAdmin) return services;
+    const allowed = new Set(session.viewerCategories);
+    return services.filter((s) => allowed.has(s.category));
+  }, [services, session, isAdmin]);
 
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
   const probeUrlsKey = useMemo(
-    () => JSON.stringify([...new Set<string>(services.map((s) => s.url))].sort((a, b) => a.localeCompare(b))),
-    [services]
+    () => JSON.stringify([...new Set<string>(visibleServices.map((s) => s.url))].sort((a, b) => a.localeCompare(b))),
+    [visibleServices]
   );
 
   useEffect(() => {
     const urls: string[] = JSON.parse(probeUrlsKey);
-    if (urls.length === 0) return;
+    if (!isAuthenticated || urls.length === 0) return;
 
     const register = () => {
       fetch('/api/services/health/targets', {
@@ -252,7 +288,7 @@ export default function App() {
     register();
     const timer = setInterval(register, 5 * 60 * 1000);
     return () => clearInterval(timer);
-  }, [probeUrlsKey]);
+  }, [probeUrlsKey, isAuthenticated]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -522,11 +558,11 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
   };
 
   // Filtering & Sorting
-  const pinnedServices = useMemo(() => services.filter((s) => s.isPinned), [services]);
+  const pinnedServices = useMemo(() => visibleServices.filter((s) => s.isPinned), [visibleServices]);
 
   const mostFrequentServices = useMemo(
-    () => [...services].sort((a, b) => b.launchesPerWeek - a.launchesPerWeek),
-    [services]
+    () => [...visibleServices].sort((a, b) => b.launchesPerWeek - a.launchesPerWeek),
+    [visibleServices]
   );
 
   const displayedServices = useMemo(() => {
@@ -536,7 +572,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
     } else if (activeTab === 'frequent') {
       list = mostFrequentServices;
     } else {
-      list = services;
+      list = visibleServices;
     }
 
     if (searchQuery.trim()) {
@@ -550,13 +586,13 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
       );
     }
     return list;
-  }, [activeTab, pinnedServices, mostFrequentServices, services, searchQuery]);
+  }, [activeTab, pinnedServices, mostFrequentServices, visibleServices, searchQuery]);
 
   // Extended remaining services (services not in top 6 pinned)
   const remainingServices = useMemo(() => {
     const pinnedIds = new Set(pinnedServices.map((s) => s.id));
-    return services.filter((s) => !pinnedIds.has(s.id));
-  }, [services, pinnedServices]);
+    return visibleServices.filter((s) => !pinnedIds.has(s.id));
+  }, [visibleServices, pinnedServices]);
 
   // Group remaining services by category
   const categorizedRemaining = useMemo(() => {
@@ -576,6 +612,24 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
     return categories;
   }, [remainingServices]);
+
+  let emptyState = {
+    title: 'No Services on Launchpad',
+    description:
+      'Auto-discover active Gateway API HTTPRoutes and Ingresses from your Kubernetes cluster, or import services to build your dashboard.',
+  };
+  if (!session) {
+    emptyState = { title: 'Loading services…', description: 'Checking your session.' };
+  } else if (!session.authenticated) {
+    emptyState = {
+      title: 'Sign in to view services',
+      description: 'No signed-in user was detected. Open the launchpad through the SSO gateway to sign in.',
+    };
+  }
+
+  // Operations views are administrator-only; viewers fall back to the overview
+  const activeView: MainView =
+    isAdmin || currentView === 'overview' || currentView === 'services' ? currentView : 'overview';
 
   const pendingRoutesCount = discoveredRoutes.filter((r) => r.status === 'pending').length;
 
@@ -598,8 +652,9 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
       {/* Main Header */}
       <Header
-        currentView={currentView}
+        currentView={activeView}
         onViewChange={setCurrentView}
+        session={session}
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenAutoDiscovery={() => setIsAutoDiscoveryOpen(true)}
         onOpenClusterModal={() => setIsClusterModalOpen(true)}
@@ -613,7 +668,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_0%,rgba(103,223,112,0.035),transparent)] pointer-events-none"></div>
 
         <div className="relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 flex flex-col items-center w-full">
-          {currentView === 'overview' && (
+          {activeView === 'overview' && (
             <div className="flex flex-col w-full max-w-4xl mx-auto gap-4">
               {/* 1. Hero Search Input */}
               <div className="w-full">
@@ -644,13 +699,15 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                 </div>
               </div>
 
-              {/* 2. Telemetry Strip */}
-              <TelemetryStrip
-                telemetry={telemetry}
-                totalServices={services.length}
-                onOpenSearch={() => setIsSearchOpen(true)}
-                onOpenClusterModal={() => setIsClusterModalOpen(true)}
-              />
+              {/* 2. Telemetry Strip (cluster telemetry is administrator-only) */}
+              {isAdmin && (
+                <TelemetryStrip
+                  telemetry={telemetry}
+                  totalServices={visibleServices.length}
+                  onOpenSearch={() => setIsSearchOpen(true)}
+                  onOpenClusterModal={() => setIsClusterModalOpen(true)}
+                />
+              )}
 
               {/* 3. Filter Tabs and Sorting Bar */}
               <div className="flex items-center justify-between pt-2 pb-1 border-b border-[#1C212B]/70">
@@ -702,7 +759,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                     </span>
                     <span>All Services</span>
                     <span className="px-1.5 py-0.2 rounded-full bg-[#191C22] text-[#94A3B8] text-[10px]">
-                      {services.length}
+                      {visibleServices.length}
                     </span>
                   </button>
                 </div>
@@ -717,25 +774,27 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
               </div>
 
               {/* 4. Main Service Cards Grid (Desktop 3 cols, Tablet 2 cols, Mobile 1 col) */}
-              {services.length === 0 ? (
+              {visibleServices.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 bg-[#0E1117]/80 border border-[#1C212B] border-dashed rounded-2xl text-center my-3">
                   <div className="h-16 w-16 rounded-2xl bg-[#151921] border border-[#283141] flex items-center justify-center text-[#67df70] mb-4 shadow-inner">
                     <span className="material-symbols-outlined text-[32px]">travel_explore</span>
                   </div>
                   <h3 className="text-base font-semibold text-white tracking-tight">
-                    No Services on Launchpad
+                    {emptyState.title}
                   </h3>
                   <p className="text-xs text-[#94A3B8] max-w-md mt-1.5 leading-relaxed">
-                    Auto-discover active Gateway API HTTPRoutes and Ingresses from your Kubernetes cluster, or import services to build your dashboard.
+                    {emptyState.description}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-3 mt-5">
-                    <button
-                      onClick={() => setIsAutoDiscoveryOpen(true)}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">radar</span>
-                      <span>Discover Cluster Routes</span>
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => setIsAutoDiscoveryOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">radar</span>
+                        <span>Discover Cluster Routes</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => setIsSearchOpen(true)}
                       className="flex items-center gap-2 px-4 py-2.5 bg-[#151921] hover:bg-[#1D2026] text-white border border-[#283141] hover:border-[#67df70]/40 rounded-xl font-mono text-xs transition-all cursor-pointer"
@@ -765,7 +824,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                       onClick={() => setActiveTab('all')}
                       className="mt-4 px-3.5 py-1.5 rounded-lg bg-[#151921] hover:bg-[#1D2026] text-[#67df70] border border-[#283141] font-mono text-xs cursor-pointer"
                     >
-                      View All Services ({services.length})
+                      View All Services ({visibleServices.length})
                     </button>
                   )}
                 </div>
@@ -809,7 +868,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                             : `Show remaining ${remainingServices.length} services`}
                         </span>
                         <span className="font-mono text-[10px] text-[#94A3B8] mt-0.5">
-                          Showing {pinnedServices.length} of {services.length} services • Media, Dev, Ops
+                          Showing {pinnedServices.length} of {visibleServices.length} services • Media, Dev, Ops
                         </span>
                       </div>
                     </div>
@@ -901,7 +960,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                     <kbd className="px-1 py-0.2 rounded bg-[#191C22] text-white">
                       ⌘K
                     </kbd>{' '}
-                    to find all {services.length} services
+                    to find all {visibleServices.length} services
                   </span>
                 </button>
               </div>
@@ -909,7 +968,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
           )}
 
           {/* View: Services (Full catalog grouped by category) */}
-          {currentView === 'services' && (
+          {activeView === 'services' && (
             <div className="w-full max-w-4xl mx-auto flex flex-col gap-6 animate-fade-in">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-[#0E1117] p-5 rounded-2xl border border-[#1C212B]">
                 <div>
@@ -917,24 +976,26 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                     Cluster Services Directory
                   </h2>
                   <p className="text-xs text-[#94A3B8] mt-0.5">
-                    All {services.length} verified internal endpoints and mesh services
+                    All {visibleServices.length} verified internal endpoints and mesh services
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsAutoDiscoveryOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#151921] hover:bg-[#1D2026] text-white rounded-lg border border-[#283141] font-mono text-xs transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-[15px] text-[#67df70]">
-                      radar
-                    </span>
-                    <span>HTTPRoute Discovery</span>
-                  </button>
-                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsAutoDiscoveryOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#151921] hover:bg-[#1D2026] text-white rounded-lg border border-[#283141] font-mono text-xs transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-[#67df70]">
+                        radar
+                      </span>
+                      <span>HTTPRoute Discovery</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Service Categories */}
-              {services.length === 0 ? (
+              {visibleServices.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 bg-[#0E1117]/80 border border-[#1C212B] border-dashed rounded-2xl text-center">
                   <div className="h-16 w-16 rounded-2xl bg-[#151921] border border-[#283141] flex items-center justify-center text-[#67df70] mb-4">
                     <span className="material-symbols-outlined text-[32px]">hub</span>
@@ -943,18 +1004,20 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                   <p className="text-xs text-[#94A3B8] max-w-sm mt-1">
                     Scan your Kubernetes cluster to discover and import active routes into the launchpad catalog.
                   </p>
-                  <button
-                    onClick={() => setIsAutoDiscoveryOpen(true)}
-                    className="mt-5 flex items-center gap-2 px-4 py-2 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">travel_explore</span>
-                    <span>Discover Cluster Routes</span>
-                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setIsAutoDiscoveryOpen(true)}
+                      className="mt-5 flex items-center gap-2 px-4 py-2 bg-[#67df70] hover:bg-[#52c95b] text-[#0A0C10] rounded-xl font-mono text-xs font-semibold cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">travel_explore</span>
+                      <span>Discover Cluster Routes</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 (['HOME & LIVING', 'MEDIA', 'TOOLS & DEV', 'CLUSTER & OPS'] as const).map(
                   (category) => {
-                    const catServices = services.filter((s) => s.category === category);
+                    const catServices = visibleServices.filter((s) => s.category === category);
                     if (catServices.length === 0) return null;
 
                     return (
@@ -992,7 +1055,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
           )}
 
           {/* View: GitOps (ArgoCD Integration) */}
-          {currentView === 'gitops' && (
+          {activeView === 'gitops' && (
             <ArgoCDView
               argoEnabled={argoEnabled}
               onToggleArgo={() => setArgoEnabled(!argoEnabled)}
@@ -1000,7 +1063,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
               onSyncApp={handleSyncArgoApp}
               onSyncAll={handleSyncAllArgo}
               isSyncingAll={isSyncingAllArgo}
-              services={services}
+              services={visibleServices}
               onLaunchService={handleLaunchService}
               onRefresh={handleRefreshArgo}
               isRefreshing={isRefreshingArgo}
@@ -1008,14 +1071,14 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
           )}
 
           {/* View: Config */}
-          {currentView === 'config' && (
+          {activeView === 'config' && (
             <ConfigView
               argoEnabled={argoEnabled}
               onToggleArgo={() => setArgoEnabled(!argoEnabled)}
               autoSyncRoutes={autoSyncRoutes}
               onToggleAutoSyncRoutes={() => setAutoSyncRoutes(!autoSyncRoutes)}
               onResetToDefaults={handleResetToDefaults}
-              totalServicesCount={services.length}
+              totalServicesCount={visibleServices.length}
               totalRoutesCount={discoveredRoutes.length}
             />
           )}
@@ -1025,27 +1088,29 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
       {/* Desktop Footer */}
       <Footer
         onOpenSearch={() => setIsSearchOpen(true)}
-        onOpenClusterModal={() => setIsClusterModalOpen(true)}
+        onOpenClusterModal={isAdmin ? () => setIsClusterModalOpen(true) : undefined}
       />
 
-      {/* Mobile Bottom Navigation Bar */}
-      <MobileBottomNav
-        currentView={currentView}
-        onViewChange={setCurrentView}
-        onOpenClusterModal={() => setIsClusterModalOpen(true)}
-      />
+      {/* Mobile Bottom Navigation Bar (every tab but Services is an operations view) */}
+      {isAdmin && (
+        <MobileBottomNav
+          currentView={activeView}
+          onViewChange={setCurrentView}
+          onOpenClusterModal={() => setIsClusterModalOpen(true)}
+        />
+      )}
 
       {/* Raycast Command Palette Modal (Screen 2) */}
       <CommandPalette
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        services={services}
+        services={visibleServices}
         onLaunchService={handleLaunchService}
       />
 
       {/* Auto-Discover HTTPRoutes Modal */}
       <AutoDiscoveryModal
-        isOpen={isAutoDiscoveryOpen}
+        isOpen={isAdmin && isAutoDiscoveryOpen}
         onClose={() => setIsAutoDiscoveryOpen(false)}
         discoveredRoutes={discoveredRoutes}
         onImportRoute={handleImportRoute}
@@ -1060,7 +1125,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
 
       {/* Cluster Telemetry & Node Modal */}
       <ClusterModal
-        isOpen={isClusterModalOpen}
+        isOpen={isAdmin && isClusterModalOpen}
         onClose={() => setIsClusterModalOpen(false)}
         telemetry={telemetry}
         nodes={clusterNodes}

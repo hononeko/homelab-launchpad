@@ -93,6 +93,45 @@ with all Linux capabilities dropped, `no-new-privileges`, no Docker socket, and
    devcontainer exec --workspace-folder . bun run build
    ```
 
+### Authentication & Access Control (Authelia)
+
+The backend reads Authelia forward-auth headers set by the gateway: `Remote-User`,
+`Remote-Name`, `Remote-Email` and `Remote-Groups`. Members of `AUTH_ADMIN_GROUPS` are
+**admins**; every other signed-in user is a **viewer**.
+
+| Capability | Admin | Viewer | Signed out |
+|---|---|---|---|
+| Services in `AUTH_VIEWER_CATEGORIES` | ✅ | ✅ | — |
+| All other categories, GitOps, cluster telemetry, Config | ✅ | — | — |
+| Route discovery/import, ArgoCD sync, telemetry refresh | ✅ | — | — |
+| Service health probes | all results | own registered URLs only | — |
+| `GET /api/health` | full detail | status only | status only |
+
+`GET /api/auth/me` returns the current session. State-changing requests must be
+same-origin (`Sec-Fetch-Site: same-origin`, or a matching `Origin` on older browsers).
+Requests from sibling subdomains are rejected, because the SSO cookie is shared across
+the domain.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_MODE` | `forward-auth` | `none` disables authentication and treats every request as an admin |
+| `AUTH_ADMIN_GROUPS` | `admins` | Comma-separated Authelia groups that grant admin access |
+| `AUTH_VIEWER_CATEGORIES` | `MEDIA,HOME & LIVING` | Service categories visible to viewers |
+| `AUTH_TRUSTED_PROXIES` | _(unset)_ | Comma-separated IPs/CIDRs of the gateway; identity headers from any other peer are ignored. Use `*` to trust every peer **only** when a NetworkPolicy already limits ingress to the gateway. When unset, development trusts every peer and **production trusts none** (everyone is signed out), so a missing setting fails closed. |
+| `AUTH_DEV_USER` / `AUTH_DEV_GROUPS` | _(unset)_ | Local development identity used when no headers are present. Ignored when `NODE_ENV=production`. |
+
+> The gateway must **overwrite** any client-supplied `Remote-*` headers with Authelia's
+> response (Traefik `authResponseHeaders`, or the equivalent for Envoy `ext_authz` on
+> Cilium Gateway). Otherwise a client could set them itself.
+>
+> Do not set `AUTH_TRUSTED_PROXIES` to the cluster-wide pod CIDR: that trusts every pod,
+> so any workload could call the service directly with forged headers. Prefer a
+> NetworkPolicy that only admits the gateway, combined with `*` or the gateway's
+> addresses (Traefik pod IPs, or the node IPs when Cilium's Envoy proxies the traffic).
+
+For local development, start the backend with an identity, e.g.
+`AUTH_DEV_USER=dev AUTH_DEV_GROUPS=admins bun run server`.
+
 ### Service Health Probes
 
 The backend probes every service URL registered by the dashboard (HEAD, falling back
