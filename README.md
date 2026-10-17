@@ -40,8 +40,8 @@ For the full architectural specification, see [ARCHITECTURE.md](docs/ARCHITECTUR
 
 ```
 +-----------------------------------------------------------------------------------+
-|                        CILIUM GATEWAY API (L7) / TRAEFIK                          |
-|                       Routes: kerrlab.app / launch.kerrlab.app                    |
+|                             TRAEFIK GATEWAY API (L7)                              |
+|                       Route: kerrlab.app (internal gateway)                       |
 +-----------------------------------------------------------------------------------+
          │                                              │
   Forward-Auth Verify                              HTTP Route

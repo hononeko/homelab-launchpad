@@ -27,8 +27,8 @@
                          HTTPS Requests / WebSocket SSE
                                          ▼
 +-----------------------------------------------------------------------------------+
-|                        CILIUM GATEWAY API (L7) / TRAEFIK                          |
-|                       Routes: kerrlab.app / launch.kerrlab.app                    |
+|                             TRAEFIK GATEWAY API (L7)                              |
+|                       Route: kerrlab.app (internal gateway)                       |
 +-----------------------------------------------------------------------------------+
          │                                              │
   Forward-Auth Verify                              HTTP Route
@@ -214,18 +214,22 @@ User Browser                      Launchpad Backend                    K8s API /
 ## 5. Kubernetes Deployment & GitOps Integration
 
 ### 5.1 Manifest Placement
-All declarative deployment manifests reside in the `homelab-k8s` repository under:
-`apps/workloads/tools/launchpad/`
+The deployment manifests live in the `homelab-k8s` repository under
+`apps/workloads/tools/launchpad/`, the source of truth for RBAC and network policy (this repository has no
+deployment manifests of its own). The `workloads-tools` ApplicationSet discovers the folder and creates the `launchpad`
+ArgoCD Application (namespace `tools`; automated sync, prune and self-heal).
 
 ### 5.2 Kubernetes Resources
-- **Deployment:** Multi-replica or single-replica pod running non-root container (`10001:10001`), read-only root filesystem, memory request `64Mi` / limit `256Mi`.
-- **Service:** ClusterIP on port `3000`.
-- **HTTPRoute:** Bound to `cilium-gateway-l7` matching `kerrlab.app` and `launch.kerrlab.app`.
-- **ClusterRole & Binding:**
-  - Read access to `gateway.networking.k8s.io` and `networking.k8s.io` for route discovery.
-  - Read, watch, patch, and update access to `argoproj.io/applications` for GitOps sync and health management.
-  - Read access to core `nodes` and `pods` (`/api/v1`) for topology and capacity statistics.
-  - Read access to `metrics.k8s.io` (`nodes`, `pods`) for live CPU and memory metrics.
-  - Read access to `longhorn.io/nodes` for distributed NVMe storage pool capacity and utilization (see `deploy/rbac.yaml`).
-- **ExternalSecret:** Fetches database credentials from Vaultwarden (no ArgoCD static token needed).
-- **ArgoCD Application:** Automated GitOps reconciliation with automated prune and self-heal.
+- **Deployment:** one replica (route, ArgoCD and health-probe state and SSE clients live in memory), non-root
+  (`10001:10001`), all capabilities dropped, probes on `/api/health`; requests `20m`/`64Mi`, limits `500m`/`256Mi`.
+  Image pinned as `ghcr.io/hononeko/homelab-launchpad:X.Y.Z@sha256:…`.
+- **Service:** ClusterIP on port `3000` (named port `web-ui`).
+- **HTTPRoute:** the apex `kerrlab.app` on Traefik's `internal-gateway` (listener `websecure-apex`), with a rate limit
+  and the `authelia-forward-auth` middleware (`AUTH_ADMIN_GROUPS=administrators`).
+- **Valkey:** per-user preferences, persisted (AOF on a `longhorn-retain` PVC, `noeviction`).
+- **RBAC (least privilege):**
+  - ClusterRole (read-only): `httproutes`, `ingresses`, `nodes`, `pods`, `metrics.k8s.io/nodes`.
+  - Role in `argocd`: get/list/watch/patch `argoproj.io/applications` (status and syncs).
+  - Role in `longhorn-system`: get/list `longhorn.io/nodes` (storage pool capacity).
+- **CiliumNetworkPolicy:** ingress only from Traefik (cluster-wide `web-ui` rule, which is why
+  `AUTH_TRUSTED_PROXIES="*"` is safe); egress only to the API server, its Valkey, Traefik and the NAS (health probes).
