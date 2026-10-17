@@ -4,5 +4,27 @@
     "config:recommended",
     ":semanticCommits",
     "mergeConfidence:all-badges"
+  ],
+  "packageRules": [
+    {
+      "groupName": "bun",
+      "matchPackageNames": [
+        "bun",
+        "oven/bun",
+        "docker.io/oven/bun",
+        "@types/bun",
+        "bun-types",
+        "oven-sh/setup-bun"
+      ]
+    },
+    {
+      "groupName": "docker build actions",
+      "matchManagers": ["github-actions"],
+      "matchPackagePatterns": ["^docker/"]
+    },
+    {
+      "groupName": "vite",
+      "matchPackagePatterns": ["^vite$", "^@vitejs/"]
+    }
   ]
 }
