@@ -1,6 +1,23 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { getK8sClient, k8sRequest, resetK8sClient } from './client';
+import { buildTlsOptions, getK8sClient, k8sRequest, resetK8sClient } from './client';
 import { FAKE_TOKEN, FakeCluster, startFakeCluster } from '../test/fakeKubeApi';
+
+describe('buildTlsOptions', () => {
+  test('verifies certificates against the system store when no custom CA is set', () => {
+    expect(buildTlsOptions({ skipTlsVerify: false }).rejectUnauthorized).toBe(true);
+  });
+
+  test('skips verification only when the kubeconfig asks for it', () => {
+    expect(buildTlsOptions({ skipTlsVerify: true }).rejectUnauthorized).toBe(false);
+  });
+
+  test('passes client certificates and the cluster CA through', () => {
+    const cert = Buffer.from('cert');
+    const key = Buffer.from('key');
+    const ca = Buffer.from('ca');
+    expect(buildTlsOptions({ cert, key, ca, skipTlsVerify: false })).toEqual({ cert, key, ca, rejectUnauthorized: true });
+  });
+});
 
 describe('simulation mode', () => {
   test('is used when no cluster is configured and rejects direct requests', async () => {
@@ -74,6 +91,11 @@ describe('connected mode', () => {
   test('rejects malformed JSON', async () => {
     cluster.on('GET /api/v1/pods', { raw: '{not json' });
     await expect(k8sRequest('/api/v1/pods')).rejects.toThrow('Failed to parse Kubernetes API JSON response');
+  });
+
+  test('rejects when the connection drops', async () => {
+    cluster.on('GET /api/v1/drop', { reset: true });
+    await expect(k8sRequest('/api/v1/drop')).rejects.toThrow('network error');
   });
 
   test('times out slow requests', async () => {

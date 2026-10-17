@@ -12,6 +12,12 @@ let cachedTelemetry: TelemetryData | null = null;
 let lastFetchTimeMs = 0;
 const CACHE_TTL_MS = 5000;
 
+/** Clears cached telemetry (used by tests). */
+export function resetTelemetryCache(): void {
+  cachedTelemetry = null;
+  lastFetchTimeMs = 0;
+}
+
 export function parseCpuToNano(cpuStr?: string): number {
   if (!cpuStr) return 0;
   if (cpuStr.endsWith('n')) return Number.parseInt(cpuStr.slice(0, -1), 10);

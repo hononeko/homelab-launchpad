@@ -57,6 +57,8 @@ function session(role: 'admin' | 'viewer' | null): AuthSession {
 }
 
 const originalFetch = globalThis.fetch;
+const originalOpen = window.open;
+const originalConfirm = window.confirm;
 let requests: Array<{ url: string; init?: RequestInit }>;
 
 interface ApiReply {
@@ -93,6 +95,8 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  window.open = originalOpen;
+  window.confirm = originalConfirm;
 });
 
 describe('App role gating', () => {

@@ -18,6 +18,8 @@ export interface FakeReply {
   // Sent verbatim instead of JSON-encoding `body`
   raw?: string;
   delayMs?: number;
+  // Drops the connection without responding
+  reset?: boolean;
 }
 
 export type FakeHandler = FakeReply | ((req: RecordedRequest, callCount: number) => FakeReply);
@@ -32,6 +34,11 @@ export interface FakeCluster {
 }
 
 export const FAKE_TOKEN = 'test-token';
+
+function resolveReply(handler: FakeHandler | undefined, req: RecordedRequest, count: number): FakeReply {
+  if (!handler) return { status: 404, body: { kind: 'Status', message: 'not found' } };
+  return typeof handler === 'function' ? handler(req, count) : handler;
+}
 
 /**
  * Starts a fake Kubernetes API server over plain HTTP and points the shared
@@ -57,15 +64,14 @@ export async function startFakeCluster(): Promise<FakeCluster> {
       const count = (callCounts.get(key) ?? 0) + 1;
       callCounts.set(key, count);
 
-      const handler = handlers.get(key);
-      const reply: FakeReply = handler
-        ? typeof handler === 'function'
-          ? handler(recorded, count)
-          : handler
-        : { status: 404, body: { kind: 'Status', message: 'not found' } };
+      const reply = resolveReply(handlers.get(key), recorded, count);
 
       const send = () => {
         if (res.destroyed) return;
+        if (reply.reset) {
+          req.socket.destroy();
+          return;
+        }
         res.writeHead(reply.status ?? 200, { 'Content-Type': 'application/json' });
         res.end(reply.raw ?? (reply.body === undefined ? '' : JSON.stringify(reply.body)));
       };

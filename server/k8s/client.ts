@@ -106,6 +106,22 @@ export function resetK8sClient(): void {
   skipTlsVerify = false;
 }
 
+export interface TlsMaterial {
+  cert?: Buffer;
+  key?: Buffer;
+  ca?: Buffer;
+  skipTlsVerify: boolean;
+}
+
+/**
+ * TLS options for API server requests. Certificates are always verified unless
+ * the kubeconfig sets insecure-skip-tls-verify: without a custom CA, Node falls
+ * back to the system trust store rather than skipping verification.
+ */
+export function buildTlsOptions({ cert, key, ca, skipTlsVerify }: TlsMaterial): https.RequestOptions {
+  return { cert, key, ca, rejectUnauthorized: !skipTlsVerify };
+}
+
 export interface K8sRequestOptions {
   method?: string;
   body?: unknown;
@@ -167,7 +183,7 @@ export function k8sRequest<T>(
 
     const tlsOptions =
       url.protocol === 'https:'
-        ? { cert: resolvedCert, key: resolvedKey, ca: resolvedCa, rejectUnauthorized: !skipTlsVerify && !!resolvedCa }
+        ? buildTlsOptions({ cert: resolvedCert, key: resolvedKey, ca: resolvedCa, skipTlsVerify })
         : {};
     const transport = url.protocol === 'https:' ? https : http;
 

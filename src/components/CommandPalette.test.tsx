@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { CommandPalette } from './CommandPalette';
 import { makeService } from '../test/fixtures';
@@ -21,6 +21,13 @@ function renderPalette(list: ServiceItem[] = services, isOpen = true) {
   const input = screen.queryByPlaceholderText('Search services, DNS routes, pods...') as HTMLInputElement | null;
   return { onClose, onLaunchService, input };
 }
+
+const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+
+afterEach(() => {
+  if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+  else delete (navigator as { clipboard?: unknown }).clipboard;
+});
 
 describe('CommandPalette', () => {
   test('renders nothing when closed', () => {

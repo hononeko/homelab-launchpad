@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { fetchClusterTelemetry, parseCpuToNano, parseMemToKiB } from './telemetry';
+import { fetchClusterTelemetry, parseCpuToNano, parseMemToKiB, resetTelemetryCache } from './telemetry';
 import { resetK8sClient } from './client';
 import { FakeCluster, startFakeCluster } from '../test/fakeKubeApi';
 import { INITIAL_NODES, INITIAL_TELEMETRY } from '../../src/data/initialData';
@@ -75,9 +75,9 @@ describe('connected mode', () => {
 
   beforeEach(() => {
     cluster.reset();
+    resetTelemetryCache();
   });
 
-  // Runs first: before any successful fetch, failures fall back to sample data
   test('falls back to sample telemetry when nodes cannot be listed', async () => {
     const data = await fetchClusterTelemetry(true);
     expect(data.telemetry).toEqual(INITIAL_TELEMETRY);
@@ -153,7 +153,7 @@ describe('connected mode', () => {
     const requestCount = cluster.requests.length;
 
     expect(await fetchClusterTelemetry()).toBe(first);
-    expect(cluster.requests.length).toBe(requestCount);
+    expect(cluster.requests).toHaveLength(requestCount);
 
     cluster.reset();
     expect(await fetchClusterTelemetry(true)).toBe(first);

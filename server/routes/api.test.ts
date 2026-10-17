@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { apiRouter, broadcastTelemetry } from './api';
 import { parseProbeTarget, resetHealthProbeState, runProbeRound } from '../health/probe';
+import { resetK8sClient } from '../k8s/client';
 import { INITIAL_NODES, INITIAL_TELEMETRY } from '../../src/data/initialData';
 
 let server: Server;
@@ -14,6 +15,10 @@ const ALICE = { 'Remote-User': 'alice', 'Remote-Groups': 'guests' };
 const BOB = { 'Remote-User': 'bob', 'Remote-Groups': 'guests' };
 
 beforeAll(async () => {
+  // Other test files point the shared client at fake clusters; pin simulation mode
+  process.env.KUBECONFIG = '/dev/null';
+  resetK8sClient();
+
   const app = express();
   app.use(express.json());
   app.use('/api', apiRouter);
@@ -174,9 +179,16 @@ describe('administrator actions (simulation mode)', () => {
     const sync = await (await call(`/argo/applications/${appName}/sync`, ADMIN, { method: 'POST' })).json();
     expect(sync).toMatchObject({ success: true, name: appName });
 
+    // Sync-all targets out-of-sync apps, or every app when all are synced
+    const drifted = refresh.applications
+      .filter((a: { syncStatus: string }) => a.syncStatus === 'OutOfSync' || a.syncStatus === 'Unknown')
+      .map((a: { name: string }) => a.name);
+    const expected = drifted.length > 0 ? drifted : refresh.applications.map((a: { name: string }) => a.name);
+
     const syncAll = await (await call('/argo/sync-all', ADMIN, { method: 'POST' })).json();
     expect(syncAll.success).toBe(true);
-    expect(syncAll.count).toBe(syncAll.triggered.length);
+    expect(syncAll.triggered).toEqual(expected);
+    expect(syncAll.count).toBe(expected.length);
   });
 
   test('sync rejects names that are not valid Kubernetes resource names', async () => {
@@ -193,12 +205,14 @@ describe('administrator actions (simulation mode)', () => {
   test('on-demand probes are throttled', async () => {
     const first = await (await call('/services/health/probe', ALICE, { method: 'POST' })).json();
     expect(first.success).toBe(true);
+    expect(first.throttled).toBe(false);
     const second = await (await call('/services/health/probe', ALICE, { method: 'POST' })).json();
     expect(second.throttled).toBe(true);
   });
 
   test('admin health includes ArgoCD and route counts', async () => {
     await call('/argo/refresh', ADMIN, { method: 'POST' });
+    await call('/routes/scan', ADMIN, { method: 'POST' });
     const health = await (await call('/health', ADMIN)).json();
     expect(health.argo.totalCached).toBeGreaterThan(0);
     expect(health.routes.lastScannedAt).not.toBeNull();

@@ -38,7 +38,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      # ci.yaml already enforces coverage; this run only feeds the scan
       - name: Unit tests with coverage
+        if: env.SONAR_TOKEN != ''
         run: bun run test:coverage
 
       - name: Run SonarCloud Scan
