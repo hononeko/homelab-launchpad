@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Homelab Launchpad](https://lh3.googleusercontent.com/aida/AEtjO1XrzS6X4beHj6GL_Ab4ZThssdJTHptiBONe-EuVvL3lv3JUs6HrztXn2K9XN_XLaoPeVUgVpCY0hWsuqPs8t9dsn5yYYblv0OZ4PkCORez8sOJtUQahEia8f6SNr7lCD6QH_-IVa6fJ3aVy9gwTaqOQsrj4wUkNaLmIazVsER5lhmC5IBgszagi8omox-Fvt6Xx1UcVDlJLDfdLDiPAwZHj340OOyVR0CIvUqJs-0zxr-Ulx2NCm-2BfpS2)
+![Homelab Launchpad](public/logo.png)
 
 **Modular Homelab Startpage & Operations Dashboard**  
 *With Kubernetes Gateway API Auto-Discovery, ArgoCD GitOps Sync Monitoring, and Real-Time Cluster Telemetry*
@@ -153,7 +153,7 @@ Each signed-in user's launchpad follows them across devices. The synced state is
 |---|---|
 | `GET /api/user/preferences` | The user's preferences with launch stats merged in, or `null` before the first save |
 | `PUT /api/user/preferences` | Save preferences (validated; at most 300 services) |
-| `POST /api/services/:id/launch` | Increment the launch counter and record the time |
+| `POST /api/services/:id/launch` | Increment the launch counter and record the time, for services in the user's saved catalog (404 otherwise). Counters of services removed from the catalog are dropped on save. |
 
 | Variable | Default | Description |
 |---|---|---|

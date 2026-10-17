@@ -25,6 +25,8 @@ function renderHeader(session: AuthSession | null) {
 describe('Header', () => {
   test('administrators get operations navigation and a profile that opens config', () => {
     const { onViewChange, onOpenAutoDiscovery, onOpenClusterModal } = renderHeader(ADMIN);
+    // Bundled asset, not a remote URL
+    expect(screen.getByAltText('Kerrlab Logo').getAttribute('src')).toBe('/logo-mark.png');
     expect(screen.getByText('Jane Doe')).toBeDefined();
     expect(screen.getByText('admin')).toBeDefined();
     expect(screen.getByText('+2')).toBeDefined();
