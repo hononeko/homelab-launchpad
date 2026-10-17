@@ -5,6 +5,7 @@ import {
   DiscoveredHTTPRoute,
   ClusterTelemetry,
   ClusterNode,
+  ServiceHealth,
   TabFilter,
   MainView,
 } from './types';
@@ -65,6 +66,7 @@ export default function App() {
 
   const [telemetry, setTelemetry] = useState<ClusterTelemetry>(INITIAL_TELEMETRY);
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>(INITIAL_NODES);
+  const [serviceHealth, setServiceHealth] = useState<Record<string, ServiceHealth>>({});
 
   // UI state
   const [currentView, setCurrentView] = useState<MainView>('overview');
@@ -188,6 +190,17 @@ export default function App() {
         }
       });
 
+      eventSource.addEventListener('health:updated', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload?.results && typeof payload.results === 'object') {
+            setServiceHealth(payload.results);
+          }
+        } catch (parseErr) {
+          console.error('[SSE] Failed to parse health:updated event:', parseErr);
+        }
+      });
+
       eventSource.addEventListener('telemetry:updated', (e: MessageEvent) => {
         try {
           const payload = JSON.parse(e.data);
@@ -209,6 +222,37 @@ export default function App() {
       eventSource?.close();
     };
   }, []);
+
+  // Register service URLs with the backend health prober. Re-registered
+  // periodically because the server expires targets no client still reports.
+  const probeUrlsKey = useMemo(
+    () => JSON.stringify([...new Set<string>(services.map((s) => s.url))].sort((a, b) => a.localeCompare(b))),
+    [services]
+  );
+
+  useEffect(() => {
+    const urls: string[] = JSON.parse(probeUrlsKey);
+    if (urls.length === 0) return;
+
+    const register = () => {
+      fetch('/api/services/health/targets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && data.results) {
+            setServiceHealth(data.results);
+          }
+        })
+        .catch((err) => console.warn('[App] Health target registration error:', err));
+    };
+
+    register();
+    const timer = setInterval(register, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [probeUrlsKey]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -737,6 +781,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                         key={service.id}
                         service={service}
                         argoApp={linkedArgo}
+                        health={serviceHealth[service.url]}
                         showArgoIntegration={argoEnabled}
                         onTogglePin={handleTogglePin}
                         onLaunch={handleLaunchService}
@@ -931,6 +976,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                               argoApp={argoApps.find(
                                 (a) => a.serviceId === service.id || a.name === service.argoAppName
                               )}
+                              health={serviceHealth[service.url]}
                               showArgoIntegration={argoEnabled}
                               onTogglePin={handleTogglePin}
                               onLaunch={handleLaunchService}

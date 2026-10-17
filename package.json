@@ -13,8 +13,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
+    "test:unit": "bun test server/",
     "test:smoke": "bun scripts/smoke-test.ts",
-    "test": "bun run lint && bun run test:smoke"
+    "test": "bun run lint && bun run test:unit && bun run test:smoke"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -33,6 +34,7 @@
     "vite": "^8.0.0"
   },
   "devDependencies": {
+    "@types/bun": "1.4.2",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
     "@types/node": "^26.0.0",

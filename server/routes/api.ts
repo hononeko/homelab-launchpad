@@ -14,6 +14,14 @@ import {
   syncAllArgoApplications,
 } from '../k8s/argo';
 import { fetchClusterTelemetry, TelemetryData } from '../k8s/telemetry';
+import {
+  getHealthSnapshot,
+  HealthSnapshot,
+  MAX_TARGETS,
+  registerTargets,
+  requestProbeRound,
+  runProbeRound,
+} from '../health/probe';
 
 export const apiRouter = Router();
 
@@ -31,12 +39,17 @@ export function broadcastTelemetry(data: TelemetryData) {
   broadcastSSE('telemetry:updated', data);
 }
 
+export function broadcastServiceHealth(snapshot: HealthSnapshot) {
+  broadcastSSE('health:updated', snapshot);
+}
+
 // 1. Healthcheck Endpoint
 apiRouter.get('/health', (req: Request, res: Response) => {
   const client = getK8sClient();
   const argoApps = getCachedArgoApps();
   const argoSynced = argoApps.filter((a) => a.syncStatus === 'Synced').length;
   const argoOutOfSync = argoApps.filter((a) => a.syncStatus === 'OutOfSync').length;
+  const healthSnapshot = getHealthSnapshot();
 
   res.json({
     status: 'ok',
@@ -55,6 +68,10 @@ apiRouter.get('/health', (req: Request, res: Response) => {
       synced: argoSynced,
       outOfSync: argoOutOfSync,
       lastScannedAt: getLastArgoScannedAt(),
+    },
+    probes: {
+      targets: healthSnapshot.targetCount,
+      lastProbedAt: healthSnapshot.lastProbedAt,
     },
     lastScannedAt: getLastScannedAt(),
     totalRoutesCached: getCachedRoutes().length,
@@ -263,7 +280,42 @@ apiRouter.post('/telemetry/refresh', (_req: Request, res: Response) => {
   void handleTelemetry(res, true);
 });
 
-// 11. Server-Sent Events (SSE) Stream
+// 11. Service Health Probe Results
+apiRouter.get('/services/health', (_req: Request, res: Response) => {
+  res.json({ success: true, ...getHealthSnapshot() });
+});
+
+// 12. Register Service URLs for Background Probing
+apiRouter.post('/services/health/targets', (req: Request, res: Response) => {
+  const urls = req.body?.urls;
+  if (!Array.isArray(urls) || urls.length > MAX_TARGETS) {
+    res.status(400).json({ success: false, error: `Expected "urls" array with at most ${MAX_TARGETS} entries` });
+    return;
+  }
+
+  const { accepted, rejected } = registerTargets(urls);
+  const snapshot = getHealthSnapshot();
+  const unprobed = accepted.filter((url) => !snapshot.results[url]);
+  if (unprobed.length > 0) {
+    void runProbeRound(unprobed);
+  }
+
+  res.json({ success: true, accepted: accepted.length, rejected, ...snapshot });
+});
+
+// 13. On-Demand Probe Round (throttled)
+apiRouter.post('/services/health/probe', async (_req: Request, res: Response) => {
+  try {
+    const { throttled } = await requestProbeRound();
+    res.json({ success: true, throttled, ...getHealthSnapshot() });
+  } catch (error: any) {
+    const safeErr = String((error as Error)?.message || error).replace(/[\n\r]/g, '');
+    console.error('[API] /services/health/probe error: %s', safeErr);
+    res.status(500).json({ success: false, error: 'Failed to probe services' });
+  }
+});
+
+// 14. Server-Sent Events (SSE) Stream
 apiRouter.get('/routes/stream', (req: Request, res: Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -292,6 +344,12 @@ apiRouter.get('/routes/stream', (req: Request, res: Response) => {
       const safeErr = String((err as Error)?.message || err).replace(/\n|\r/g, '');
       console.warn('[SSE] Failed to send initial telemetry: %s', safeErr);
     });
+
+  // Send latest service health results so cards render status immediately
+  const healthSnapshot = getHealthSnapshot();
+  if (healthSnapshot.lastProbedAt) {
+    res.write(`event: health:updated\ndata: ${JSON.stringify(healthSnapshot)}\n\n`);
+  }
 
   sseClients.add(res);
 
