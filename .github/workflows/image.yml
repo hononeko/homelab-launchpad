@@ -50,6 +50,7 @@ jobs:
 
       # Without a cluster or Valkey the server runs in simulation mode with in-memory preferences, and the public
       # health endpoint answers. AUTH_TRUSTED_PROXIES="*" only silences the production fail-closed warning.
+      # It used about 29 MiB after startup on both architectures (Bun 1.4.3); the limit leaves headroom.
       - name: Smoke test
         uses: hononeko/actions/smoke-test@5195ba91f927f924616c364a7eddd737fbff5308 # v1.2.0
         with:
@@ -59,7 +60,7 @@ jobs:
           status: "200"
           env: |
             AUTH_TRUSTED_PROXIES=*
-          max-memory-mib: "256"
+          max-memory-mib: "64"
 
       - name: Log in to GitHub Container Registry (GHCR)
         if: inputs.push
