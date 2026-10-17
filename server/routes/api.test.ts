@@ -146,8 +146,10 @@ describe('role-based access control', () => {
 
 describe('service health isolation', () => {
   test('only administrators may register hosts known only from cluster routes', async () => {
-    // Populate the discovered-route cache (simulation data) and pick a host
+    // Populate the discovered-route cache with simulation data (test:unit sets
+    // KUBECONFIG=/dev/null) and pick a host
     const { routes } = await (await call('/routes', ADMIN)).json();
+    expect(routes?.length).toBeGreaterThan(0);
     const clusterUrl = `https://${routes[0].host}/`;
     process.env.HEALTH_PROBE_ALLOWED_DOMAINS = 'example.invalid';
 
