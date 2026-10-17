@@ -1,0 +1,23 @@
+{
+  "name": "Homelab Launchpad",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceFolder": "/workspaces/homelab-launchpad",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/homelab-launchpad,type=bind",
+  "containerUser": "bun",
+  "remoteUser": "bun",
+  "updateRemoteUserUID": true,
+  // Keep third-party packages off the host filesystem.
+  "mounts": [
+    "source=homelab-launchpad-node_modules,target=/workspaces/homelab-launchpad/node_modules,type=volume"
+  ],
+  // Least privilege: no Linux capabilities, no privilege escalation, no Docker socket.
+  "runArgs": ["--cap-drop=ALL", "--security-opt=no-new-privileges"],
+  "containerEnv": {
+    // Never pick up a kubeconfig; the backend runs in simulation mode.
+    "KUBECONFIG": "/dev/null"
+  },
+  "forwardPorts": [3000, 3001],
+  "postCreateCommand": "bun install --frozen-lockfile --ignore-scripts"
+}

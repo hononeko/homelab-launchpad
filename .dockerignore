@@ -6,6 +6,7 @@ dist-server
 # Git & Tooling
 .git
 .github
+.devcontainer
 .vscode
 .antigravity
 .bun
