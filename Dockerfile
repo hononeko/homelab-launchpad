@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Build & Compile Assets
 # ==============================================================================
-FROM oven/bun:alpine AS builder
+FROM oven/bun:1.4.3-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ RUN bun run build
 # ==============================================================================
 # Stage 2: Minimal Production Runtime
 # ==============================================================================
-FROM oven/bun:alpine AS runner
+FROM oven/bun:1.4.3-alpine AS runner
 
 WORKDIR /app
 
