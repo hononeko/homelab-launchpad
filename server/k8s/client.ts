@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import https from 'node:https';
 import * as k8s from '@kubernetes/client-node';
 
@@ -95,6 +96,32 @@ export function getK8sClient(): K8sClientContext {
   return clientContext;
 }
 
+/** Drops the cached client so the next call reloads the kubeconfig (used by tests). */
+export function resetK8sClient(): void {
+  clientContext = null;
+  resolvedCert = undefined;
+  resolvedKey = undefined;
+  resolvedCa = undefined;
+  resolvedToken = undefined;
+  skipTlsVerify = false;
+}
+
+export interface TlsMaterial {
+  cert?: Buffer;
+  key?: Buffer;
+  ca?: Buffer;
+  skipTlsVerify: boolean;
+}
+
+/**
+ * TLS options for API server requests. Certificates are always verified unless
+ * the kubeconfig sets insecure-skip-tls-verify: without a custom CA, Node falls
+ * back to the system trust store rather than skipping verification.
+ */
+export function buildTlsOptions({ cert, key, ca, skipTlsVerify }: TlsMaterial): https.RequestOptions {
+  return { cert, key, ca, rejectUnauthorized: !skipTlsVerify };
+}
+
 export interface K8sRequestOptions {
   method?: string;
   body?: unknown;
@@ -103,8 +130,9 @@ export interface K8sRequestOptions {
 }
 
 /**
- * Executes a direct HTTPS request against the Kubernetes API server using the active credentials
+ * Executes a direct request against the Kubernetes API server using the active credentials
  * (supporting mTLS client certificates, ServiceAccount bearer tokens, and cluster CA verification).
+ * Plain HTTP is used for `http://` servers such as `kubectl proxy`.
  */
 export function k8sRequest<T>(
   endpoint: string,
@@ -153,15 +181,18 @@ export function k8sRequest<T>(
       headers.Authorization = `Bearer ${resolvedToken}`;
     }
 
-    const req = https.request(
+    const tlsOptions =
+      url.protocol === 'https:'
+        ? buildTlsOptions({ cert: resolvedCert, key: resolvedKey, ca: resolvedCa, skipTlsVerify })
+        : {};
+    const transport = url.protocol === 'https:' ? https : http;
+
+    const req = transport.request(
       url,
       {
         method,
         headers,
-        cert: resolvedCert,
-        key: resolvedKey,
-        ca: resolvedCa,
-        rejectUnauthorized: !skipTlsVerify && !!resolvedCa,
+        ...tlsOptions,
         timeout: timeoutMs,
       },
       (res) => {

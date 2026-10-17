@@ -93,6 +93,19 @@ with all Linux capabilities dropped, `no-new-privileges`, no Docker socket, and
    devcontainer exec --workspace-folder . bun run build
    ```
 
+### Testing
+
+Tests use Bun's built-in runner (`bun test`) in two separate runs, so the browser DOM never leaks into server tests:
+
+| Script | Scope |
+|---|---|
+| `test:server` | `server/**/*.test.ts`. Kubernetes access runs against a fake API server (`server/test/fakeKubeApi.ts`) in connected mode, or in simulation mode (`KUBECONFIG=/dev/null`), so tests never reach a real cluster. |
+| `test:client` | `src/**/*.test.tsx` with happy-dom and Testing Library (preloaded from `src/test/setup.ts`) |
+| `test:unit` | Both of the above |
+| `test:coverage` | Both, with LCOV reports in `coverage/{server,client}/lcov.info` and the per-file floors from `bunfig.toml` |
+
+CI runs `test:coverage`. The **SonarCloud Analysis** workflow uploads both reports once the `SONAR_TOKEN` secret is set and SonarCloud's automatic analysis is turned off.
+
 ### Authentication & Access Control (Authelia)
 
 The backend reads Authelia forward-auth headers set by the gateway: `Remote-User`,

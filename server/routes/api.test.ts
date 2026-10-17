@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { apiRouter, broadcastTelemetry } from './api';
 import { parseProbeTarget, resetHealthProbeState, runProbeRound } from '../health/probe';
+import { resetK8sClient } from '../k8s/client';
 import { INITIAL_NODES, INITIAL_TELEMETRY } from '../../src/data/initialData';
 
 let server: Server;
@@ -14,6 +15,10 @@ const ALICE = { 'Remote-User': 'alice', 'Remote-Groups': 'guests' };
 const BOB = { 'Remote-User': 'bob', 'Remote-Groups': 'guests' };
 
 beforeAll(async () => {
+  // Other test files point the shared client at fake clusters; pin simulation mode
+  process.env.KUBECONFIG = '/dev/null';
+  resetK8sClient();
+
   const app = express();
   app.use(express.json());
   app.use('/api', apiRouter);
@@ -141,6 +146,76 @@ describe('role-based access control', () => {
     expect((await call('/routes')).status).toBe(200);
     const session = await (await call('/auth/me')).json();
     expect(session.user).toMatchObject({ username: 'anonymous', role: 'admin' });
+  });
+});
+
+describe('administrator actions (simulation mode)', () => {
+  test('route scan marks previously imported routes', async () => {
+    // Scan first: other test files share the module-level route cache
+    const { routes: initial } = await (await postJson('/routes/scan', ADMIN, {})).json();
+    const importedId = initial[0].id;
+
+    const scan = await (await postJson('/routes/scan', ADMIN, { importedIds: [importedId] })).json();
+    expect(scan.success).toBe(true);
+    expect(scan.count).toBe(initial.length);
+    expect(scan.routes.find((r: { id: string }) => r.id === importedId).status).toBe('imported');
+  });
+
+  test('route import validates the route id', async () => {
+    const { routes } = await (await call('/routes', ADMIN)).json();
+    expect((await postJson('/routes/import', ADMIN, {})).status).toBe(400);
+    expect((await postJson('/routes/import', ADMIN, { routeId: 'missing' })).status).toBe(404);
+
+    const imported = await postJson('/routes/import', ADMIN, { routeId: routes[0].id });
+    expect(await imported.json()).toEqual({ success: true, routeId: routes[0].id });
+  });
+
+  test('ArgoCD refresh, single sync, and sync-all succeed', async () => {
+    const refresh = await (await call('/argo/refresh', ADMIN, { method: 'POST' })).json();
+    expect(refresh.success).toBe(true);
+    expect(refresh.count).toBeGreaterThan(0);
+    const appName = refresh.applications[0].name;
+
+    const sync = await (await call(`/argo/applications/${appName}/sync`, ADMIN, { method: 'POST' })).json();
+    expect(sync).toMatchObject({ success: true, name: appName });
+
+    // Sync-all targets out-of-sync apps, or every app when all are synced
+    const drifted = refresh.applications
+      .filter((a: { syncStatus: string }) => a.syncStatus === 'OutOfSync' || a.syncStatus === 'Unknown')
+      .map((a: { name: string }) => a.name);
+    const expected = drifted.length > 0 ? drifted : refresh.applications.map((a: { name: string }) => a.name);
+
+    const syncAll = await (await call('/argo/sync-all', ADMIN, { method: 'POST' })).json();
+    expect(syncAll.success).toBe(true);
+    expect(syncAll.triggered).toEqual(expected);
+    expect(syncAll.count).toBe(expected.length);
+  });
+
+  test('sync rejects names that are not valid Kubernetes resource names', async () => {
+    const res = await call('/argo/applications/Bad_Name/sync', ADMIN, { method: 'POST' });
+    expect(res.status).toBe(400);
+  });
+
+  test('telemetry refresh returns fresh telemetry', async () => {
+    const data = await (await call('/telemetry/refresh', ADMIN, { method: 'POST' })).json();
+    expect(data.success).toBe(true);
+    expect(data.telemetry.nodeCount).toBeGreaterThan(0);
+  });
+
+  test('on-demand probes are throttled', async () => {
+    const first = await (await call('/services/health/probe', ALICE, { method: 'POST' })).json();
+    expect(first.success).toBe(true);
+    expect(first.throttled).toBe(false);
+    const second = await (await call('/services/health/probe', ALICE, { method: 'POST' })).json();
+    expect(second.throttled).toBe(true);
+  });
+
+  test('admin health includes ArgoCD and route counts', async () => {
+    await call('/argo/refresh', ADMIN, { method: 'POST' });
+    await call('/routes/scan', ADMIN, { method: 'POST' });
+    const health = await (await call('/health', ADMIN)).json();
+    expect(health.argo.totalCached).toBeGreaterThan(0);
+    expect(health.routes.lastScannedAt).not.toBeNull();
   });
 });
 
