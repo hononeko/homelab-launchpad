@@ -1,0 +1,9 @@
+# Server and client tests run as separate `bun test` invocations (see package.json)
+# so the client's DOM globals never leak into server tests.
+[test]
+coverageReporter = ["text", "lcov"]
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["server/test/**", "src/test/**"]
+# Bun enforces these per file, so they are floors just below today's weakest
+# files (route error branches, small inline handlers). Sonar gates new code.
+coverageThreshold = { lines = 0.8, functions = 0.6 }

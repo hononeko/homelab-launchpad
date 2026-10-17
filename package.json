@@ -13,7 +13,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
-    "test:unit": "KUBECONFIG=/dev/null bun test server/",
+    "test:server": "KUBECONFIG=/dev/null bun test server/",
+    "test:client": "bun test --preload ./src/test/setup.ts src/",
+    "test:unit": "bun run test:server && bun run test:client",
+    "test:coverage": "KUBECONFIG=/dev/null bun test --coverage --coverage-dir=coverage/server server/ && bun test --preload ./src/test/setup.ts --coverage --coverage-dir=coverage/client src/",
     "test:smoke": "bun scripts/smoke-test.ts",
     "test": "bun run lint && bun run test:unit && bun run test:smoke"
   },
@@ -34,6 +37,9 @@
     "vite": "^8.0.0"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^21.0.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/bun": "1.4.2",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
