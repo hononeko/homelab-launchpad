@@ -58,9 +58,23 @@ describe('AutoDiscoveryModal', () => {
 
   test('filters routes by namespace', () => {
     renderModal();
+    expect(screen.getByText('Showing 3 of 3 routes')).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: 'home' }));
     expect(screen.queryByText('jellyfin.example.com')).toBeNull();
     expect(screen.getByText('mealie.example.com')).toBeDefined();
+    expect(screen.getByText('Showing 1 of 3 routes in home')).toBeDefined();
+  });
+
+  test('reports how many routes are not on the launchpad yet', () => {
+    renderModal();
+    expect(screen.getByText('2 not yet on the launchpad')).toBeDefined();
+  });
+
+  test('route details carry their full values instead of being truncated', () => {
+    renderModal();
+    const details = screen.getByText('jellyfin.example.com').parentElement!;
+    expect(details.getAttribute('title')).toBe('jellyfin.example.com → jellyfin:8096 (internal-gw)');
+    expect(details.className).not.toContain('truncate');
   });
 
   test('adds a custom route from the form', () => {

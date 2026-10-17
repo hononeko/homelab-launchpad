@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+/* Thin scrollbar in the dark theme's colours, for scrolling panels like the discovery modal */
+@utility scrollbar-subtle {
+  scrollbar-width: thin;
+  scrollbar-color: #283141 transparent;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: #283141;
+    border-radius: 9999px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: #3a4558;
+  }
+}
