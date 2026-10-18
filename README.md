@@ -189,6 +189,43 @@ Administrators can change the rules under **Settings → Category & icon rules**
 | `POST /api/config/mappings/reset` | Go back to the bundled defaults |
 | `PUT` / `DELETE /api/config/mappings/overrides/:host` | Set or remove one host's `name`, `category` and `icon` |
 
+### On-Demand Workloads (Sleep / Wake)
+
+Administrators can put heavy, single-instance workloads (game servers, dev environments) to sleep at 0 replicas and wake them at 1, from an **On-demand workloads** panel on the Overview. A workload opts in with annotations on its Deployment or StatefulSet:
+
+| Annotation | Description |
+|---|---|
+| `launchpad.kerrlab.app/scalable: "true"` | Lists the workload with a start/stop control |
+| `launchpad.kerrlab.app/host: app.example.com` | Optional. Links it to the service card with that host: the card gets a power button, shows when the service is sleeping or starting, and launching it while asleep offers to start it instead |
+
+Only namespaces listed in `SCALE_NAMESPACES` (comma-separated, e.g. `games`) are looked at. The server only ever sets 0 or 1 replicas, and refuses workloads that run more than one. In simulation mode two sample workloads are listed.
+
+The launchpad needs a Role in each of those namespaces:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: launchpad-workload-scaler
+  namespace: games
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["patch"]
+```
+
+…bound to the launchpad's ServiceAccount with a RoleBinding.
+
+**GitOps:** leave `replicas` out of the workload's manifest (Kubernetes defaults it to 1), so ArgoCD doesn't own the field. A sleeping workload then doesn't show as OutOfSync, and a sync doesn't wake it. If the manifest must keep `replicas`, add an `ignoreDifferences` entry for `/spec/replicas` on that workload to its Application.
+
+| Endpoint (administrators only) | Description |
+|---|---|
+| `GET /api/workloads` | Opted-in workloads with desired and ready replicas and a state: `running`, `stopped`, `starting` or `stopping` |
+| `POST /api/workloads/:namespace/:kind/:name/scale` | Body `{ "replicas": 0 \| 1 }`; `kind` is `deployment` or `statefulset` |
+
 ### Service Health Probes
 
 The backend probes every service URL registered by the dashboard (HEAD, falling back

@@ -1,5 +1,6 @@
 import React from 'react';
-import { ServiceItem, ArgoApplication, ServiceHealth } from '../types';
+import { ServiceItem, ArgoApplication, ScalableWorkload, ServiceHealth } from '../types';
+import { WorkloadPowerButton, WorkloadStatusBadge } from './WorkloadControls';
 
 interface ServiceCardProps {
   service: ServiceItem;
@@ -10,6 +11,10 @@ interface ServiceCardProps {
   onLaunch: (service: ServiceItem) => void;
   onHide?: (id: string) => void;
   onEdit?: (id: string) => void;
+  // The workload behind this service, when administrators can put it to sleep
+  workload?: ScalableWorkload;
+  workloadBusy?: boolean;
+  onToggleWorkload?: (workload: ScalableWorkload) => void;
 }
 
 interface StatusPresentation {
@@ -67,6 +72,9 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   onLaunch,
   onHide,
   onEdit,
+  workload,
+  workloadBusy = false,
+  onToggleWorkload,
 }) => {
   const handleClick = (e: React.MouseEvent) => {
     // If clicking star or internal button, don't trigger general launch
@@ -80,6 +88,20 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   // Live probe results take precedence over the stored service status
   const status = getStatusPresentation(health?.status ?? service.status, argoApp, showArgoIntegration);
   const latencyMs = health ? health.latencyMs : service.latencyMs;
+
+  const healthStatus = (
+    <div className="flex items-center gap-1.5" title={formatHealthTitle(health)}>
+      <span className={`h-1.5 w-1.5 rounded-full ${status.dotClass}`}></span>
+      <span className={status.textClass}>
+        {status.label} • {service.lastAccessed}
+      </span>
+      {latencyMs !== undefined && latencyMs !== null && (
+        <span className="text-[#64748B] hidden sm:inline">
+          ({latencyMs}ms)
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -111,6 +133,10 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         </div>
 
         <div className="flex items-center shrink-0">
+          {workload && onToggleWorkload && (
+            <WorkloadPowerButton workload={workload} busy={workloadBusy} onToggle={onToggleWorkload} compact />
+          )}
+
           {onEdit && (
             <button
               type="button"
@@ -162,17 +188,8 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
 
       {/* Bottom Telemetry & Launch Count */}
       <div className="flex items-center justify-between pt-2.5 border-t border-[#1C212B] font-mono text-[11px] text-[#64748B]">
-        <div className="flex items-center gap-1.5" title={formatHealthTitle(health)}>
-          <span className={`h-1.5 w-1.5 rounded-full ${status.dotClass}`}></span>
-          <span className={status.textClass}>
-            {status.label} • {service.lastAccessed}
-          </span>
-          {latencyMs !== undefined && latencyMs !== null && (
-            <span className="text-[#64748B] hidden sm:inline">
-              ({latencyMs}ms)
-            </span>
-          )}
-        </div>
+        {/* A sleeping or waking workload explains itself better than a failed probe would */}
+        {workload && workload.state !== 'running' ? <WorkloadStatusBadge workload={workload} /> : healthStatus}
 
         <div className="flex items-center gap-1">
           {showArgoIntegration && argoApp && (

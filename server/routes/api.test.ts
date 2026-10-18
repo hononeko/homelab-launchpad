@@ -89,6 +89,8 @@ describe('role-based access control', () => {
     ['POST', '/config/mappings/reset'],
     ['PUT', '/config/mappings/overrides/app.example.com'],
     ['DELETE', '/config/mappings/overrides/app.example.com'],
+    ['GET', '/workloads'],
+    ['POST', '/workloads/games/statefulset/satisfactory/scale'],
   ];
 
   test.each(adminOnly)('%s %s requires authentication', async (method, path) => {
