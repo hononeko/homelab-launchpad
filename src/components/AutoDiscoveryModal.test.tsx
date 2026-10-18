@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { ComponentProps } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AutoDiscoveryModal } from './AutoDiscoveryModal';
 import { makeRoute } from '../test/fixtures';
 
@@ -161,5 +161,29 @@ describe('AutoDiscoveryModal', () => {
   test('says nothing about exclusions when there are none', () => {
     renderModal();
     expect(screen.queryByText(/excluded by the server/)).toBeNull();
+  });
+
+  test('adjusting a route opens its override dialog', async () => {
+    const onSaveRouteOverride = mock(async () => true);
+    renderModal({
+      onSaveRouteOverride,
+      discoveredRoutes: [makeRoute({ override: { icon: 'live_tv' } }), routes[1]],
+    });
+    expect(screen.getAllByText('adjusted')).toHaveLength(1);
+
+    fireEvent.click(screen.getByLabelText('Adjust mealie.example.com'));
+    expect(screen.getByText('Route defaults')).toBeDefined();
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(screen.queryByText('Route defaults')).toBeNull());
+    expect(onSaveRouteOverride).toHaveBeenCalledWith('mealie.example.com', {
+      name: 'Mealie',
+      category: 'MEDIA',
+      icon: 'tv',
+    });
+  });
+
+  test('has no adjust button without a handler', () => {
+    renderModal();
+    expect(screen.queryByLabelText('Adjust mealie.example.com')).toBeNull();
   });
 });

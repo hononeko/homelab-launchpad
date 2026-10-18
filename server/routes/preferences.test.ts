@@ -163,6 +163,8 @@ describe('preferences API', () => {
         throw new Error('connection refused');
       },
       launchStats: async () => ({}),
+      loadSetting: async () => null,
+      saveSetting: async () => {},
       close: () => {},
     };
     setPreferencesStore(failing);

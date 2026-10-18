@@ -11,6 +11,7 @@ import {
   scanClusterRoutes,
 } from './discovery';
 import { resetK8sClient } from './client';
+import { DEFAULT_MAPPINGS, setMappings } from './mappings';
 import { FAKE_TOKEN, FakeCluster, startFakeCluster } from '../test/fakeKubeApi';
 import { INITIAL_DISCOVERED_ROUTES } from '../../src/data/initialData';
 
@@ -133,6 +134,34 @@ describe('simulation mode', () => {
   });
 });
 
+describe('category mappings', () => {
+  afterEach(() => setMappings(null));
+
+  test('classification follows the active mappings', () => {
+    setMappings({
+      ...DEFAULT_MAPPINGS,
+      appRules: [{ keywords: ['portal'], category: 'MEDIA', icon: 'cast' }, ...DEFAULT_MAPPINGS.appRules],
+    });
+    expect(classifyRoute('portal', 'unknown', 'portal.example.com', 'web')).toEqual({ category: 'MEDIA', icon: 'cast' });
+  });
+
+  test('host overrides correct simulated routes and are reported', async () => {
+    process.env.KUBECONFIG = '/dev/null';
+    resetK8sClient();
+    const [first] = INITIAL_DISCOVERED_ROUTES;
+    setMappings({ ...DEFAULT_MAPPINGS, overrides: { [first.host]: { name: 'Photos', category: 'HOME & LIVING' } } });
+
+    const routes = await scanClusterRoutes();
+    expect(routes.find((r) => r.id === first.id)).toMatchObject({
+      name: 'Photos',
+      suggestedCategory: 'HOME & LIVING',
+      suggestedIcon: first.suggestedIcon,
+      override: { name: 'Photos', category: 'HOME & LIVING' },
+    });
+    expect(routes.find((r) => r.id !== first.id)?.override).toBeUndefined();
+  });
+});
+
 describe('connected mode', () => {
   let cluster: FakeCluster;
 
@@ -183,6 +212,18 @@ describe('connected mode', () => {
       suggestedCategory: 'CLUSTER & OPS',
     });
     expect(cluster.requests.every((r) => r.headers.authorization === `Bearer ${FAKE_TOKEN}`)).toBe(true);
+  });
+
+  test('host overrides correct discovered routes', async () => {
+    cluster.on(`GET ${HTTPROUTES_PATH}`, { body: { items: [jellyfinRoute] } });
+    cluster.on(`GET ${INGRESSES_PATH}`, { body: { items: [] } });
+    setMappings({ ...DEFAULT_MAPPINGS, overrides: { 'jellyfin.example.com': { icon: 'live_tv' } } });
+    try {
+      const [jellyfin] = await scanClusterRoutes();
+      expect(jellyfin).toMatchObject({ name: 'Jellyfin', suggestedCategory: 'MEDIA', suggestedIcon: 'live_tv' });
+    } finally {
+      setMappings(null);
+    }
   });
 
   test('applies defaults for sparse resources', async () => {

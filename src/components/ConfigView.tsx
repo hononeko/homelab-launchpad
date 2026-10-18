@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SERVICE_CATEGORIES, ServiceCategory, TabFilter } from '../types';
 import { SyncState } from '../hooks/usePreferencesSync';
+import { CategoryRulesPanel } from './CategoryRulesPanel';
 
 const TAB_LABELS: Record<TabFilter, string> = {
   pinned: 'Pinned & Recent',
@@ -279,6 +280,9 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
           </div>
         </div>
       </form>
+
+      {/* Saved on its own: the rules are shared by every administrator, not part of this user's settings */}
+      <CategoryRulesPanel />
     </div>
   );
 };

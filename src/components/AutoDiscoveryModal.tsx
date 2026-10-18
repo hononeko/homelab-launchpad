@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { DiscoveredHTTPRoute, ExcludedRoute, ExclusionReason, RouteAlternate } from '../types';
+import { DiscoveredHTTPRoute, ExcludedRoute, ExclusionReason, RouteAlternate, RouteOverride } from '../types';
+import { RouteOverrideModal } from './RouteOverrideModal';
 
 interface AutoDiscoveryModalProps {
   isOpen: boolean;
@@ -16,6 +17,8 @@ interface AutoDiscoveryModalProps {
   onToggleRouteHidden?: (routeId: string) => void;
   // Routes the server left out (annotation, env filters, no backends)
   excludedRoutes?: ExcludedRoute[];
+  // Saves (or, with null, removes) the shared name, category and icon for a host
+  onSaveRouteOverride?: (host: string, override: RouteOverride | null) => Promise<boolean>;
   k8sStatus?: {
     connected: boolean;
     server: string | null;
@@ -49,8 +52,10 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   hiddenRouteIds = [],
   onToggleRouteHidden,
   excludedRoutes = [],
+  onSaveRouteOverride,
   k8sStatus,
 }) => {
+  const [overrideRouteId, setOverrideRouteId] = useState<string | null>(null);
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
   const [showHidden, setShowHidden] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -60,6 +65,8 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   const [newCategory, setNewCategory] = useState<'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS'>('TOOLS & DEV');
 
   if (!isOpen) return null;
+
+  const overrideRoute = overrideRouteId ? discoveredRoutes.find((r) => r.id === overrideRouteId) : undefined;
 
   const hidden = new Set(hiddenRouteIds);
   const hiddenCount = discoveredRoutes.filter((r) => hidden.has(r.id)).length;
@@ -369,6 +376,14 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                             lock
                           </span>
                         )}
+                        {route.override && (
+                          <span
+                            className="font-mono text-[9px] px-1.5 rounded bg-[#67df70]/10 text-[#67df70] border border-[#67df70]/30"
+                            title="Name, category or icon set by an administrator"
+                          >
+                            adjusted
+                          </span>
+                        )}
                         {route.alternates && route.alternates.length > 0 && (
                           <span
                             className="flex items-center gap-0.5 font-mono text-[9px] px-1.5 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]"
@@ -396,6 +411,17 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0 ml-auto">
+                    {onSaveRouteOverride && (
+                      <button
+                        type="button"
+                        onClick={() => setOverrideRouteId(route.id)}
+                        className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] transition-colors"
+                        title="Set the name, category and icon used on import"
+                        aria-label={`Adjust ${route.host}`}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">tune</span>
+                      </button>
+                    )}
                     {onToggleRouteHidden && (
                       <button
                         type="button"
@@ -461,6 +487,16 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
           </div>
           <span>{pendingCount} not yet on the launchpad</span>
         </div>
+
+        {/* Inside the panel, so clicks in the dialog never reach the backdrop's close handler */}
+        {overrideRoute && onSaveRouteOverride && (
+          <RouteOverrideModal
+            key={overrideRoute.id}
+            route={overrideRoute}
+            onSave={onSaveRouteOverride}
+            onClose={() => setOverrideRouteId(null)}
+          />
+        )}
       </div>
     </div>
   );

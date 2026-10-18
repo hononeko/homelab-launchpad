@@ -84,6 +84,11 @@ describe('role-based access control', () => {
     ['POST', '/argo/sync-all'],
     ['GET', '/telemetry'],
     ['POST', '/telemetry/refresh'],
+    ['GET', '/config/mappings'],
+    ['PUT', '/config/mappings'],
+    ['POST', '/config/mappings/reset'],
+    ['PUT', '/config/mappings/overrides/app.example.com'],
+    ['DELETE', '/config/mappings/overrides/app.example.com'],
   ];
 
   test.each(adminOnly)('%s %s requires authentication', async (method, path) => {

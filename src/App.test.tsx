@@ -280,6 +280,34 @@ describe('App administrator flows', () => {
     expect(await screen.findByText('only-app')).toBeDefined();
   });
 
+  test('route overrides are saved on the server and the routes reloaded', async () => {
+    await renderAsAdmin({
+      '/api/config/mappings/overrides/immich.example.com': { body: { success: true } },
+    });
+    fireEvent.click(screen.getByTitle('Auto-discover Kubernetes HTTPRoutes'));
+    fireEvent.click(await screen.findByLabelText('Adjust immich.example.com'));
+    fireEvent.change(screen.getByLabelText('NAME'), { target: { value: 'Photos' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    expect(await screen.findByText('Saved defaults for immich.example.com')).toBeDefined();
+    const put = requests.find((r) => r.url === '/api/config/mappings/overrides/immich.example.com');
+    expect(put!.init!.method).toBe('PUT');
+    expect(JSON.parse(String(put!.init!.body))).toMatchObject({ name: 'Photos' });
+    expect(requests.filter((r) => r.url === '/api/routes')).toHaveLength(2);
+  });
+
+  test('a rejected route override is reported and the dialog stays open', async () => {
+    await renderAsAdmin({
+      '/api/config/mappings/overrides/immich.example.com': { status: 400, body: { success: false, error: 'override.icon is invalid' } },
+    });
+    fireEvent.click(screen.getByTitle('Auto-discover Kubernetes HTTPRoutes'));
+    fireEvent.click(await screen.findByLabelText('Adjust immich.example.com'));
+    fireEvent.click(screen.getByText('Save'));
+
+    expect(await screen.findByText('Could not save: override.icon is invalid')).toBeDefined();
+    expect(screen.getByText('Route defaults')).toBeDefined();
+  });
+
   test('the cluster modal shows node telemetry', async () => {
     await renderAsAdmin();
     fireEvent.click(screen.getByTitle('View Cluster Nodes & Pod Telemetry'));

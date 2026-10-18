@@ -56,6 +56,8 @@ export interface DiscoveredHTTPRoute {
   argoAppName?: string;
   // Other routes serving the same host (e.g. the external twin of an internal route)
   alternates?: RouteAlternate[];
+  // Set when an administrator corrected this host's name, category or icon
+  override?: RouteOverride;
 }
 
 export interface RouteAlternate {
@@ -171,3 +173,32 @@ export interface LaunchStats {
   lastLaunchedAt: number;
 }
 export type MainView = 'overview' | 'services' | 'gitops' | 'cluster' | 'config';
+
+/** Classifies discovered routes whose name, namespace, host or backend contains any keyword. */
+export interface KeywordRule {
+  keywords: string[];
+  category: ServiceCategory;
+  icon: string;
+}
+
+export interface CategoryIcon {
+  category: ServiceCategory;
+  icon: string;
+}
+
+/** Per-host corrections; any field left out keeps the classified value. */
+export interface RouteOverride {
+  name?: string;
+  category?: ServiceCategory;
+  icon?: string;
+}
+
+/**
+ * How discovered routes get their suggested category and icon. Keyword rules
+ * are tried in order, then the route's namespace; host overrides win over both.
+ */
+export interface CategoryMappings {
+  appRules: KeywordRule[];
+  namespaceRules: Record<string, CategoryIcon>;
+  overrides: Record<string, RouteOverride>;
+}

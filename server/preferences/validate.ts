@@ -3,7 +3,7 @@ import { SERVICE_CATEGORIES, ServiceCategory, ServiceItem, TAB_FILTERS, TabFilte
 export const MAX_SERVICES = 300;
 export const MAX_HIDDEN_ROUTES = 500;
 export const SERVICE_ID_PATTERN = /^[\w.:-]{1,200}$/;
-const ICON_PATTERN = /^[a-z0-9_]{1,64}$/;
+export const ICON_PATTERN = /^[a-z0-9_]{1,64}$/;
 const ARGO_APP_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const TABS = new Set<unknown>(TAB_FILTERS);
 const CATEGORIES = new Set<unknown>(SERVICE_CATEGORIES);
@@ -22,7 +22,7 @@ export const DEFAULT_PREFERENCES: PreferencesInput = {
   autoSyncRoutes: false,
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -39,7 +39,7 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function isCategory(value: unknown): value is ServiceCategory {
+export function isCategory(value: unknown): value is ServiceCategory {
   return CATEGORIES.has(value);
 }
 

@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { createApp } from './app';
 import { broadcastServiceHealth, broadcastTelemetry } from './routes/api';
+import { restoreMappings } from './routes/mappings';
 import { getK8sClient } from './k8s/client';
 import { scanClusterRoutes } from './k8s/discovery';
 import { fetchArgoApplications } from './k8s/argo';
@@ -98,5 +99,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     `[Server] Service health probes every ${probeConfig.intervalMs}ms (timeout ${probeConfig.timeoutMs}ms, domains: ${probeConfig.allowedDomains.join(', ') || 'discovered routes only'})`
   );
 
+  // Saved category mappings must be active before the first route scan
+  await warmUp('category mappings', () => restoreMappings());
   await startClusterSync();
 });
