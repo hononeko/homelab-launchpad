@@ -72,4 +72,22 @@ describe('ServiceCard', () => {
     renderCard({ argoApp: makeArgoApp({ syncStatus: 'Synced' }), health: makeHealth({ status: 'offline' }) });
     expect(screen.getByText('Offline • 2h ago')).toBeDefined();
   });
+
+  test('offers hiding only when the parent handles it', () => {
+    const onHide = mock();
+    renderCard({ onHide });
+    fireEvent.click(screen.getByTitle('Hide from dashboard'));
+    expect(onHide).toHaveBeenCalledWith('imported-jellyfin');
+  });
+
+  test('hiding does not launch the service', () => {
+    const { onLaunch } = renderCard({ onHide: mock() });
+    fireEvent.click(screen.getByTitle('Hide from dashboard'));
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  test('has no hide button without a handler', () => {
+    renderCard();
+    expect(screen.queryByTitle('Hide from dashboard')).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_PREFERENCES, MAX_SERVICES, parsePreferences } from './validate';
+import { DEFAULT_PREFERENCES, MAX_HIDDEN_ROUTES, MAX_SERVICES, parsePreferences } from './validate';
 
 const validService = {
   id: 'imported-route-media-jellyfin',
@@ -65,10 +65,31 @@ describe('parsePreferences', () => {
     ['unknown hidden categories', { services: [], hiddenCategories: ['GAMES'] }, '"hiddenCategories"'],
     ['an unknown default tab', { services: [], defaultTab: 'recent' }, '"defaultTab"'],
     ['non-boolean toggles', { services: [], argoEnabled: 'no' }, 'must be booleans'],
+    ['a non-boolean hidden flag', { services: [{ ...validService, hidden: 'yes' }] }, 'services[0].hidden'],
+    ['hidden route ids that are not a list', { services: [], hiddenRouteIds: 'route-a' }, '"hiddenRouteIds"'],
+    ['an invalid hidden route id', { services: [], hiddenRouteIds: ['bad id!'] }, '"hiddenRouteIds"'],
+    [
+      'too many hidden routes',
+      { services: [], hiddenRouteIds: Array.from({ length: MAX_HIDDEN_ROUTES + 1 }, (_, i) => `route-${i}`) },
+      '"hiddenRouteIds"',
+    ],
   ])('rejects %s', (_label, body, error) => {
     const result = parsePreferences(body);
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.error).toContain(error);
+  });
+
+  test('keeps hidden services and de-duplicates hidden route ids', () => {
+    const result = parsePreferences({
+      services: [{ ...validService, hidden: true }, { ...validService, id: 'custom-a', hidden: false }],
+      hiddenRouteIds: ['route-apps-a', 'route-apps-a', 'route-apps-b'],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok === false) return;
+    expect(result.value.services[0].hidden).toBe(true);
+    // Only `true` is stored, so visible services look the same whether or not they were ever hidden
+    expect('hidden' in result.value.services[1]).toBe(false);
+    expect(result.value.hiddenRouteIds).toEqual(['route-apps-a', 'route-apps-b']);
   });
 
   test('ignores invalid launch seeds instead of rejecting the payload', () => {

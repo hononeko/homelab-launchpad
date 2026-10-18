@@ -8,6 +8,7 @@ interface ServiceCardProps {
   showArgoIntegration?: boolean;
   onTogglePin: (id: string, e: React.MouseEvent) => void;
   onLaunch: (service: ServiceItem) => void;
+  onHide?: (id: string) => void;
 }
 
 interface StatusPresentation {
@@ -63,6 +64,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   showArgoIntegration = true,
   onTogglePin,
   onLaunch,
+  onHide,
 }) => {
   const handleClick = (e: React.MouseEvent) => {
     // If clicking star or internal button, don't trigger general launch
@@ -106,23 +108,37 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
           </div>
         </div>
 
-        {/* Pin / Star Toggle */}
-        <button
-          type="button"
-          onClick={(e) => onTogglePin(service.id, e)}
-          className="p-1 text-[#64748B] hover:text-[#67df70] rounded-md transition-colors shrink-0"
-          title={service.isPinned ? 'Unpin service' : 'Pin to favorites'}
-        >
-          <span
-            className={`material-symbols-outlined text-[17px] ${
-              service.isPinned
-                ? 'text-[#67df70] font-fill'
-                : 'hover:text-[#67df70]'
-            }`}
+        <div className="flex items-center shrink-0">
+          {onHide && (
+            <button
+              type="button"
+              onClick={() => onHide(service.id)}
+              className="p-1 text-[#64748B] hover:text-[#CBD5E1] rounded-md transition-all sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+              title="Hide from dashboard"
+              aria-label={`Hide ${service.name} from dashboard`}
+            >
+              <span className="material-symbols-outlined text-[17px]">visibility_off</span>
+            </button>
+          )}
+
+          {/* Pin / Star Toggle */}
+          <button
+            type="button"
+            onClick={(e) => onTogglePin(service.id, e)}
+            className="p-1 text-[#64748B] hover:text-[#67df70] rounded-md transition-colors shrink-0"
+            title={service.isPinned ? 'Unpin service' : 'Pin to favorites'}
           >
-            {service.isPinned ? 'star' : 'star_border'}
-          </span>
-        </button>
+            <span
+              className={`material-symbols-outlined text-[17px] ${
+                service.isPinned
+                  ? 'text-[#67df70] font-fill'
+                  : 'hover:text-[#67df70]'
+              }`}
+            >
+              {service.isPinned ? 'star' : 'star_border'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Description */}

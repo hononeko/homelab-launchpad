@@ -1,5 +1,15 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { classifyRoute, getCachedRoutes, getLastScannedAt, markRouteImported, scanClusterRoutes } from './discovery';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  classifyRoute,
+  getCachedRoutes,
+  getDiscoveryFilters,
+  getExcludedRoutes,
+  getLastScannedAt,
+  globToRegExp,
+  HIDDEN_ANNOTATION,
+  markRouteImported,
+  scanClusterRoutes,
+} from './discovery';
 import { resetK8sClient } from './client';
 import { FAKE_TOKEN, FakeCluster, startFakeCluster } from '../test/fakeKubeApi';
 import { INITIAL_DISCOVERED_ROUTES } from '../../src/data/initialData';
@@ -52,6 +62,60 @@ describe('classifyRoute', () => {
   });
 });
 
+// A minimal HTTPRoute serving one host through the given gateways
+interface RouteExtras {
+  namespace?: string;
+  annotations?: Record<string, string>;
+  rules?: unknown[];
+}
+
+function httpRoute(name: string, host: string, gateways: string[], extra: RouteExtras = {}) {
+  return {
+    metadata: { name, namespace: extra.namespace ?? 'apps', annotations: extra.annotations },
+    spec: {
+      hostnames: [host],
+      parentRefs: gateways.map((g) => ({ name: g })),
+      rules: extra.rules ?? [{ backendRefs: [{ name, port: 8080 }] }],
+    },
+  };
+}
+
+describe('globToRegExp', () => {
+  test('matches whole hosts case-insensitively with * as a wildcard', () => {
+    const pattern = globToRegExp('*-webhook.example.com');
+    expect(pattern.test('renovate-webhook.example.com')).toBe(true);
+    expect(pattern.test('Renovate-Webhook.Example.com')).toBe(true);
+    expect(pattern.test('webhook.example.com.evil.test')).toBe(false);
+  });
+
+  test('treats regex characters in the glob literally', () => {
+    const pattern = globToRegExp('app.example.com');
+    expect(pattern.test('app.example.com')).toBe(true);
+    expect(pattern.test('appxexample.com')).toBe(false);
+  });
+});
+
+describe('getDiscoveryFilters', () => {
+  afterEach(() => {
+    delete process.env.DISCOVERY_EXCLUDE_NAMESPACES;
+    delete process.env.DISCOVERY_EXCLUDE_HOSTS;
+  });
+
+  test('reads comma-separated namespaces and host globs, ignoring blanks', () => {
+    process.env.DISCOVERY_EXCLUDE_NAMESPACES = ' kube-system, ,monitoring ';
+    process.env.DISCOVERY_EXCLUDE_HOSTS = 'hooks.example.com,*.internal.example.com';
+    const filters = getDiscoveryFilters();
+    expect([...filters.excludeNamespaces]).toEqual(['kube-system', 'monitoring']);
+    expect(filters.excludeHosts).toHaveLength(2);
+  });
+
+  test('excludes nothing by default', () => {
+    const filters = getDiscoveryFilters();
+    expect(filters.excludeNamespaces.size).toBe(0);
+    expect(filters.excludeHosts).toHaveLength(0);
+  });
+});
+
 describe('simulation mode', () => {
   beforeAll(() => {
     process.env.KUBECONFIG = '/dev/null';
@@ -64,6 +128,7 @@ describe('simulation mode', () => {
     expect(routes).toHaveLength(INITIAL_DISCOVERED_ROUTES.length);
     expect(routes.find((r) => r.id === importedId)?.status).toBe('imported');
     expect(getCachedRoutes()).toBe(routes);
+    expect(getExcludedRoutes()).toEqual([]);
     expect(getLastScannedAt()).not.toBeNull();
   });
 });
@@ -121,7 +186,9 @@ describe('connected mode', () => {
   });
 
   test('applies defaults for sparse resources', async () => {
-    cluster.on(`GET ${HTTPROUTES_PATH}`, { body: { items: [{ spec: { hostnames: ['bare.example.com'] } }] } });
+    cluster.on(`GET ${HTTPROUTES_PATH}`, {
+      body: { items: [{ spec: { hostnames: ['bare.example.com'], rules: [{ backendRefs: [{}] }] } }] },
+    });
     cluster.on(`GET ${INGRESSES_PATH}`, {
       body: { items: [{ metadata: { name: 'plain' }, spec: { rules: [{ host: 'plain.example.com' }] } }] },
     });
@@ -130,7 +197,8 @@ describe('connected mode', () => {
     expect(routes.find((r) => r.host === 'bare.example.com')).toMatchObject({
       namespace: 'default',
       path: '/',
-      gateway: 'cilium-gateway-l7',
+      gateway: 'unknown-gateway',
+      backendService: 'unnamed-route',
       port: 80,
     });
     expect(routes.find((r) => r.host === 'plain.example.com')).toMatchObject({ tlsEnabled: false, port: 80 });
@@ -176,5 +244,140 @@ describe('connected mode', () => {
     expect(markRouteImported('route-media-jellyfin-route')).toBe(true);
     expect(getCachedRoutes()[0].status).toBe('imported');
     expect(markRouteImported('missing')).toBe(false);
+  });
+
+  describe('several routes for one host', () => {
+    beforeEach(() => {
+      cluster.on(`GET ${INGRESSES_PATH}`, { body: { items: [] } });
+    });
+
+    test('prefers the internal route and lists the others as alternates', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: {
+          items: [
+            httpRoute('app-external', 'app.example.com', ['external-gateway']),
+            httpRoute('app', 'app.example.com', ['internal-gateway']),
+          ],
+        },
+      });
+
+      const routes = await scanClusterRoutes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0]).toMatchObject({ id: 'route-apps-app', gateway: 'internal-gateway' });
+      expect(routes[0].alternates).toEqual([{ name: 'app-external', namespace: 'apps', gateways: ['external-gateway'] }]);
+    });
+
+    test('an "external" name loses to a route that is not, on the same gateways', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: {
+          items: [
+            httpRoute('a-external-route', 'app.example.com', ['shared-gateway']),
+            httpRoute('b-route', 'app.example.com', ['shared-gateway']),
+          ],
+        },
+      });
+
+      const [route] = await scanClusterRoutes();
+      expect(route.id).toBe('route-apps-b-route');
+    });
+
+    test('equally preferred routes resolve by name', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: { items: [httpRoute('zeta', 'app.example.com', ['gw']), httpRoute('alpha', 'app.example.com', ['gw'])] },
+      });
+
+      const [route] = await scanClusterRoutes();
+      expect(route.id).toBe('route-apps-alpha');
+      expect(route.alternates?.map((a) => a.name)).toEqual(['zeta']);
+    });
+
+    test('a single route has no alternates', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, { body: { items: [jellyfinRoute] } });
+      const [route] = await scanClusterRoutes();
+      expect(route.alternates).toBeUndefined();
+    });
+
+    test('the backend comes from the first rule that has one', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: {
+          items: [
+            httpRoute('app', 'app.example.com', ['gw'], {
+              rules: [
+                { matches: [{ path: { value: '/old' } }], filters: [{ type: 'RequestRedirect' }] },
+                { matches: [{ path: { value: '/ui' } }], backendRefs: [{ name: 'app-web', port: 3000 }] },
+              ],
+            }),
+          ],
+        },
+      });
+
+      const [route] = await scanClusterRoutes();
+      expect(route).toMatchObject({ path: '/ui', backendService: 'app-web', port: 3000 });
+    });
+  });
+
+  describe('exclusions', () => {
+    afterEach(() => {
+      delete process.env.DISCOVERY_EXCLUDE_NAMESPACES;
+      delete process.env.DISCOVERY_EXCLUDE_HOSTS;
+    });
+
+    test('leaves out annotated, filtered, and backend-less routes and reports why', async () => {
+      process.env.DISCOVERY_EXCLUDE_NAMESPACES = 'ops';
+      process.env.DISCOVERY_EXCLUDE_HOSTS = '*-webhook.example.com';
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: {
+          items: [
+            httpRoute('app', 'app.example.com', ['gw']),
+            httpRoute('secret-app', 'secret.example.com', ['gw'], { annotations: { [HIDDEN_ANNOTATION]: 'true' } }),
+            httpRoute('visible-app', 'visible.example.com', ['gw'], { annotations: { [HIDDEN_ANNOTATION]: 'false' } }),
+            httpRoute('metrics', 'metrics.example.com', ['gw'], { namespace: 'ops' }),
+            httpRoute('ci-webhook', 'ci-webhook.example.com', ['gw']),
+            httpRoute('old-name', 'old.example.com', ['gw'], {
+              rules: [{ filters: [{ type: 'RequestRedirect', requestRedirect: { hostname: 'app.example.com' } }] }],
+            }),
+          ],
+        },
+      });
+      cluster.on(`GET ${INGRESSES_PATH}`, {
+        body: {
+          items: [
+            {
+              metadata: { name: 'legacy', namespace: 'apps', annotations: { [HIDDEN_ANNOTATION]: 'true' } },
+              spec: { rules: [{ host: 'legacy.example.com' }] },
+            },
+          ],
+        },
+      });
+
+      const routes = await scanClusterRoutes();
+      expect(routes.map((r) => r.host).sort((a, b) => a.localeCompare(b))).toEqual([
+        'app.example.com',
+        'visible.example.com',
+      ]);
+      expect(getExcludedRoutes()).toEqual([
+        { name: 'ci-webhook', namespace: 'apps', host: 'ci-webhook.example.com', reason: 'host-pattern' },
+        { name: 'legacy', namespace: 'apps', host: 'legacy.example.com', reason: 'annotation' },
+        { name: 'metrics', namespace: 'ops', host: 'metrics.example.com', reason: 'namespace' },
+        { name: 'old-name', namespace: 'apps', host: 'old.example.com', reason: 'no-backends' },
+        { name: 'secret-app', namespace: 'apps', host: 'secret.example.com', reason: 'annotation' },
+      ]);
+    });
+
+    test('an excluded route does not block its host from another route', async () => {
+      cluster.on(`GET ${HTTPROUTES_PATH}`, {
+        body: {
+          items: [
+            httpRoute('app', 'app.example.com', ['internal-gateway'], { annotations: { [HIDDEN_ANNOTATION]: 'true' } }),
+            httpRoute('app-external', 'app.example.com', ['external-gateway']),
+          ],
+        },
+      });
+      cluster.on(`GET ${INGRESSES_PATH}`, { body: { items: [] } });
+
+      const [route] = await scanClusterRoutes();
+      expect(route.id).toBe('route-apps-app-external');
+      expect(route.alternates).toBeUndefined();
+    });
   });
 });

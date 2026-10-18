@@ -6,6 +6,7 @@ export type SyncState = 'local' | 'loading' | 'synced' | 'saving' | 'offline' | 
 export interface SyncedSettings {
   services: ServiceItem[];
   hiddenCategories: ServiceCategory[];
+  hiddenRouteIds: string[];
   defaultTab: TabFilter;
   argoEnabled: boolean;
   autoSyncRoutes: boolean;
@@ -38,9 +39,12 @@ function toPayload(settings: SyncedSettings, withSeeds = false) {
       ...(s.argoAppName ? { argoAppName: s.argoAppName } : {}),
       ...(s.discoveredFrom ? { discoveredFrom: s.discoveredFrom } : {}),
       ...(s.custom === undefined ? {} : { custom: s.custom }),
+      ...(s.hidden ? { hidden: true } : {}),
       ...(withSeeds ? { launchesPerWeek: s.launchesPerWeek, lastAccessedTimestamp: s.lastAccessedTimestamp } : {}),
     })),
     hiddenCategories: settings.hiddenCategories,
+    // Profiles saved before route hiding existed have no list
+    hiddenRouteIds: settings.hiddenRouteIds ?? [],
     defaultTab: settings.defaultTab,
     argoEnabled: settings.argoEnabled,
     autoSyncRoutes: settings.autoSyncRoutes,

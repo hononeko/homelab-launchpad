@@ -1,6 +1,7 @@
 import { SERVICE_CATEGORIES, ServiceCategory, ServiceItem, TAB_FILTERS, TabFilter, UserPreferences } from '../../src/types';
 
 export const MAX_SERVICES = 300;
+export const MAX_HIDDEN_ROUTES = 500;
 export const SERVICE_ID_PATTERN = /^[\w.:-]{1,200}$/;
 const ICON_PATTERN = /^[a-z0-9_]{1,64}$/;
 const ARGO_APP_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
@@ -15,6 +16,7 @@ export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string
 export const DEFAULT_PREFERENCES: PreferencesInput = {
   services: [],
   hiddenCategories: [],
+  hiddenRouteIds: [],
   defaultTab: 'pinned',
   argoEnabled: true,
   autoSyncRoutes: false,
@@ -65,6 +67,7 @@ function invalidServiceField(raw: Record<string, unknown>): string | null {
     ['argoAppName', raw.argoAppName === undefined || matches(raw.argoAppName, 1, 253, ARGO_APP_PATTERN)],
     ['discoveredFrom', raw.discoveredFrom === undefined || DISCOVERY_SOURCES.has(raw.discoveredFrom)],
     ['custom', raw.custom === undefined || typeof raw.custom === 'boolean'],
+    ['hidden', raw.hidden === undefined || typeof raw.hidden === 'boolean'],
   ];
   return checks.find(([, valid]) => !valid)?.[0] ?? null;
 }
@@ -96,6 +99,7 @@ function parseService(raw: unknown, index: number): ParseResult<ServiceItem> {
   if (raw.argoAppName !== undefined) service.argoAppName = raw.argoAppName as string;
   if (raw.discoveredFrom !== undefined) service.discoveredFrom = raw.discoveredFrom as ServiceItem['discoveredFrom'];
   if (raw.custom !== undefined) service.custom = raw.custom as boolean;
+  if (raw.hidden === true) service.hidden = true;
   return { ok: true, value: service };
 }
 
@@ -122,6 +126,14 @@ function parseSettings(body: Record<string, unknown>): ParseResult<Settings> {
   if (!Array.isArray(hidden) || !hidden.every(isCategory)) {
     return { ok: false, error: '"hiddenCategories" must list known categories' };
   }
+  const hiddenRouteIds = body.hiddenRouteIds ?? [];
+  if (
+    !Array.isArray(hiddenRouteIds) ||
+    hiddenRouteIds.length > MAX_HIDDEN_ROUTES ||
+    !hiddenRouteIds.every((id) => matches(id, 1, 200, SERVICE_ID_PATTERN))
+  ) {
+    return { ok: false, error: `"hiddenRouteIds" must list at most ${MAX_HIDDEN_ROUTES} route ids` };
+  }
   const defaultTab = body.defaultTab ?? DEFAULT_PREFERENCES.defaultTab;
   if (!TABS.has(defaultTab)) return { ok: false, error: '"defaultTab" is invalid' };
   const argoEnabled = body.argoEnabled ?? DEFAULT_PREFERENCES.argoEnabled;
@@ -133,6 +145,7 @@ function parseSettings(body: Record<string, unknown>): ParseResult<Settings> {
     ok: true,
     value: {
       hiddenCategories: [...new Set(hidden)],
+      hiddenRouteIds: [...new Set<string>(hiddenRouteIds)],
       defaultTab: defaultTab as TabFilter,
       argoEnabled,
       autoSyncRoutes,

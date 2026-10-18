@@ -109,4 +109,57 @@ describe('AutoDiscoveryModal', () => {
     fireEvent.click(screen.getByText('jellyfin.example.com').closest('.fixed')!);
     expect(onClose).toHaveBeenCalled();
   });
+
+  test('hidden routes are left out of the list and bulk import until shown', () => {
+    const onToggleRouteHidden = mock();
+    renderModal({ hiddenRouteIds: ['route-home-mealie'], onToggleRouteHidden });
+    expect(screen.queryByText('mealie.example.com')).toBeNull();
+    expect(screen.getByText('Import All (1)')).toBeDefined();
+    expect(screen.getByText('Showing 2 of 3 routes')).toBeDefined();
+    // The namespace of a hidden-only route is not offered as a filter
+    expect(screen.queryByRole('button', { name: 'home' })).toBeNull();
+
+    fireEvent.click(screen.getByText('Show hidden (1)'));
+    expect(screen.getByText('mealie.example.com')).toBeDefined();
+    fireEvent.click(screen.getByLabelText('Unhide mealie.example.com'));
+    expect(onToggleRouteHidden).toHaveBeenCalledWith('route-home-mealie');
+
+    fireEvent.click(screen.getByLabelText('Hide jellyfin.example.com'));
+    expect(onToggleRouteHidden).toHaveBeenLastCalledWith('route-media-jellyfin');
+  });
+
+  test('routes cannot be hidden without a handler', () => {
+    renderModal();
+    expect(screen.queryByLabelText('Hide jellyfin.example.com')).toBeNull();
+    expect(screen.queryByText(/Show hidden/)).toBeNull();
+  });
+
+  test('a route served by several HTTPRoutes shows its alternates', () => {
+    renderModal({
+      discoveredRoutes: [
+        makeRoute({
+          alternates: [{ name: 'jellyfin-external', namespace: 'media', gateways: ['external-gateway'] }],
+        }),
+      ],
+    });
+    const badge = screen.getByText('+1').parentElement!;
+    expect(badge.getAttribute('title')).toBe('Also served by: media/jellyfin-external (external-gateway)');
+  });
+
+  test('lists the routes the server excluded and why', () => {
+    renderModal({
+      excludedRoutes: [
+        { name: 'old-name', namespace: 'apps', host: 'old.example.com', reason: 'no-backends' },
+        { name: 'ci-webhook', namespace: 'apps', host: 'ci-webhook.example.com', reason: 'host-pattern' },
+      ],
+    });
+    expect(screen.getByText('2 routes excluded by the server')).toBeDefined();
+    expect(screen.getByText('apps/old-name • redirect or no backend')).toBeDefined();
+    expect(screen.getByText('apps/ci-webhook • excluded host pattern')).toBeDefined();
+  });
+
+  test('says nothing about exclusions when there are none', () => {
+    renderModal();
+    expect(screen.queryByText(/excluded by the server/)).toBeNull();
+  });
 });
