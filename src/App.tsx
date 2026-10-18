@@ -27,7 +27,7 @@ import {
 import { Header } from './components/Header';
 import { ServiceCard } from './components/ServiceCard';
 import { TelemetryStrip } from './components/TelemetryStrip';
-import { CommandPalette } from './components/CommandPalette';
+import { CommandPalette, PaletteCommand } from './components/CommandPalette';
 import { AutoDiscoveryModal } from './components/AutoDiscoveryModal';
 import { ArgoCDView } from './components/ArgoCDView';
 import { ClusterModal } from './components/ClusterModal';
@@ -783,6 +783,64 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
   const activeView: MainView =
     isAdmin || currentView === 'overview' || currentView === 'services' ? currentView : 'overview';
 
+  // Commands for the palette's ">" mode; operations are administrator-only like their views
+  const goTo = (view: MainView, title: string, icon: string, keywords: string[]): PaletteCommand => ({
+    id: `go-${view}`,
+    title,
+    icon,
+    keywords: ['go', 'open', 'view', ...keywords],
+    run: () => setCurrentView(view),
+  });
+  const paletteCommands: PaletteCommand[] = [
+    goTo('overview', 'Go to Overview', 'dashboard', ['home', 'dashboard']),
+    goTo('services', 'Go to Services', 'apps', ['catalog', 'directory']),
+    ...(isAdmin
+      ? [
+          goTo('gitops', 'Go to GitOps', 'published_with_changes', ['argocd', 'argo']),
+          goTo('config', 'Go to Settings', 'settings', ['config', 'preferences', 'rules']),
+          {
+            id: 'scan-routes',
+            title: 'Scan cluster routes',
+            icon: 'radar',
+            keywords: ['scan', 'discover', 'httproute', 'ingress'],
+            run: () => void handleScanClusterRoutes(),
+          },
+          {
+            id: 'open-discovery',
+            title: 'Open route discovery',
+            icon: 'alt_route',
+            keywords: ['discover', 'import', 'httproute', 'routes'],
+            run: () => setIsAutoDiscoveryOpen(true),
+          },
+          {
+            id: 'open-cluster',
+            title: 'Open cluster telemetry',
+            icon: 'developer_board',
+            keywords: ['cluster', 'nodes', 'pods', 'telemetry'],
+            run: () => setIsClusterModalOpen(true),
+          },
+          ...(argoEnabled
+            ? [
+                {
+                  id: 'argo-sync-all',
+                  title: 'Sync all ArgoCD applications',
+                  icon: 'sync',
+                  keywords: ['sync', 'argocd', 'gitops', 'deploy'],
+                  run: () => void handleSyncAllArgo(),
+                },
+                {
+                  id: 'argo-refresh',
+                  title: 'Refresh ArgoCD applications',
+                  icon: 'refresh',
+                  keywords: ['refresh', 'argocd', 'gitops', 'reload'],
+                  run: () => void handleRefreshArgo(),
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ];
+
   const pendingRoutesCount = discoveredRoutes.filter((r) => r.status === 'pending').length;
 
   const argoSyncHealth = useMemo(() => {
@@ -1281,6 +1339,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         onClose={() => setIsSearchOpen(false)}
         services={visibleServices}
         onLaunchService={handleLaunchService}
+        commands={paletteCommands}
       />
 
       {/* Auto-Discover HTTPRoutes Modal */}

@@ -308,6 +308,21 @@ describe('App administrator flows', () => {
     expect(screen.getByText('Route defaults')).toBeDefined();
   });
 
+  test('the command palette runs administrator commands', async () => {
+    await renderAsAdmin({ '/api/routes/scan': { body: { success: true, routes: ROUTES, count: 1 } } });
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    const input = await screen.findByPlaceholderText('Search services, or type > for commands');
+    fireEvent.change(input, { target: { value: '> scan' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('Cluster scan complete: 1 HTTPRoutes verified via Gateway API')).toBeDefined();
+
+    fireEvent.keyDown(window, { key: '/' });
+    const again = await screen.findByPlaceholderText('Search services, or type > for commands');
+    fireEvent.change(again, { target: { value: '>settings' } });
+    fireEvent.keyDown(again, { key: 'Enter' });
+    expect(await screen.findByText('Homelab Launchpad Configuration')).toBeDefined();
+  });
+
   test('the cluster modal shows node telemetry', async () => {
     await renderAsAdmin();
     fireEvent.click(screen.getByTitle('View Cluster Nodes & Pod Telemetry'));
@@ -331,12 +346,23 @@ describe('App navigation', () => {
     await screen.findByText('Mealie');
 
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    const input = await screen.findByPlaceholderText('Search services, DNS routes, pods...');
+    const input = await screen.findByPlaceholderText('Search services, or type > for commands');
     fireEvent.keyDown(input, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByPlaceholderText('Search services, DNS routes, pods...')).toBeNull());
+    await waitFor(() => expect(screen.queryByPlaceholderText('Search services, or type > for commands')).toBeNull());
 
     fireEvent.keyDown(window, { key: '/' });
-    expect(await screen.findByPlaceholderText('Search services, DNS routes, pods...')).toBeDefined();
+    expect(await screen.findByPlaceholderText('Search services, or type > for commands')).toBeDefined();
+  });
+
+  test('viewers only get navigation commands', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Mealie');
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    const input = await screen.findByPlaceholderText('Search services, or type > for commands');
+    fireEvent.change(input, { target: { value: '>' } });
+    expect(screen.getByText('2 matching commands')).toBeDefined();
+    expect(screen.queryByText('Scan cluster routes')).toBeNull();
   });
 
   test('tabs switch between pinned, frequent, and all services', async () => {

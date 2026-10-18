@@ -28,7 +28,7 @@ For the full architectural specification, see [ARCHITECTURE.md](docs/ARCHITECTUR
 ## Key Capabilities
 
 - **Categorized Service Matrix:** Pinned and categorized access across `MEDIA`, `HOME & LIVING`, `TOOLS & DEV`, and `CLUSTER & OPS`.
-- **Command Palette (`⌘K` / `/`):** Lightning-fast fuzzy search with keyboard navigation and quick action commands (`> sync all`, `> scan routes`).
+- **Command Palette (`⌘K` / `/`):** Fuzzy search over service names, addresses, categories and descriptions. `↑`/`↓` move, `Enter` launches, `Shift+Enter` copies the URL, `Tab` cycles category filters. Type `>` for commands: go to a view, and for administrators scan routes, open route discovery or cluster telemetry, and sync or refresh ArgoCD.
 - **Gateway API Auto-Discovery:** Native discovery of Kubernetes Gateway API `HTTPRoute` and `Ingress` resources with automatic categorization and 1-click import.
 - **ArgoCD GitOps Sync:** Live tracking of application synchronization states (`Synced`, `OutOfSync`, `Syncing`) and direct reconciliation triggers.
 - **Real-Time Cluster Telemetry:** Live pod counts, aggregated CPU load, NVMe storage pool metrics, and individual node statuses via `ClusterModal`.
