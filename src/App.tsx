@@ -514,7 +514,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
       );
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        showToast(`Could not save: ${typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`}`);
+        const reason = typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`;
+        showToast(`Could not save: ${reason}`);
         return false;
       }
       // The server re-ran discovery before answering, so the route list is current

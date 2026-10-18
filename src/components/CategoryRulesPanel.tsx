@@ -201,7 +201,8 @@ export const CategoryRulesPanel: React.FC = () => {
         accept(data);
         setMessage(done);
       } else {
-        setMessage(`Could not save: ${typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`}`);
+        const reason = typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`;
+        setMessage(`Could not save: ${reason}`);
       }
     } catch {
       setMessage('Could not reach the server');
@@ -261,7 +262,7 @@ export const CategoryRulesPanel: React.FC = () => {
   return (
     <section className="bg-[#0E1117] border border-[#1C212B] rounded-2xl p-6 shadow-sm space-y-3">
       <div>
-        <h3 className="font-mono text-xs font-semibold text-[#67df70] uppercase tracking-wider">// CATEGORY &amp; ICON RULES</h3>
+        <h3 className="font-mono text-xs font-semibold text-[#67df70] uppercase tracking-wider">{'// CATEGORY & ICON RULES'}</h3>
         <p className="font-mono text-[10px] text-[#64748B] mt-1">
           Suggested category and icon for discovered routes. Keyword rules are tried top to bottom against the route
           name, namespace, host and backend; then the route&apos;s namespace. {customized ? 'Customized.' : 'Using the built-in defaults.'}
@@ -324,9 +325,7 @@ export const CategoryRulesPanel: React.FC = () => {
       </details>
 
       <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-[#1C212B]">
-        <span className="font-mono text-[10px] text-[#94A3B8]" role="status">
-          {problem && dirty ? problem : message}
-        </span>
+        <output className="font-mono text-[10px] text-[#94A3B8]">{problem && dirty ? problem : message}</output>
         <div className="flex items-center gap-2 ml-auto">
           {customized && (
             <button
