@@ -1,5 +1,6 @@
 import { getK8sClient, k8sRequest } from './client';
 import { INITIAL_DISCOVERED_ROUTES } from '../../src/data/initialData';
+import type { ExcludedRoute, ExclusionReason, RouteAlternate } from '../../src/types';
 
 export type HomelabCategory = 'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS';
 
@@ -18,10 +19,40 @@ export interface DiscoveredRoute {
   suggestedCategory: HomelabCategory;
   suggestedIcon: string;
   argoAppName?: string;
+  alternates?: RouteAlternate[];
+}
+
+// Routes annotated `launchpad.kerrlab.app/hidden: "true"` are never discovered
+export const HIDDEN_ANNOTATION = 'launchpad.kerrlab.app/hidden';
+
+export interface DiscoveryFilters {
+  excludeNamespaces: Set<string>;
+  excludeHosts: RegExp[];
+}
+
+/** Case-insensitive match for a host glob where `*` matches any characters. */
+export function globToRegExp(glob: string): RegExp {
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, String.raw`\$&`).replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+function csv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+export function getDiscoveryFilters(): DiscoveryFilters {
+  return {
+    excludeNamespaces: new Set(csv(process.env.DISCOVERY_EXCLUDE_NAMESPACES)),
+    excludeHosts: csv(process.env.DISCOVERY_EXCLUDE_HOSTS).map(globToRegExp),
+  };
 }
 
 // In-memory cache of discovered routes
 let cachedRoutes: DiscoveredRoute[] = [];
+let cachedExcluded: ExcludedRoute[] = [];
 let lastScannedAt: string | null = null;
 
 interface ClassificationRule {
@@ -163,45 +194,104 @@ function buildDiscoveredRoute(params: BuildRouteParams): DiscoveredRoute {
   };
 }
 
+interface HttpRouteCandidate {
+  name: string;
+  namespace: string;
+  host: string;
+  gateways: string[];
+  metadata: any;
+  spec: any;
+}
+
+function exclusionReason(
+  candidate: { name: string; namespace: string; host: string; metadata: any },
+  filters: DiscoveryFilters
+): ExclusionReason | null {
+  if (candidate.metadata.annotations?.[HIDDEN_ANNOTATION] === 'true') return 'annotation';
+  if (filters.excludeNamespaces.has(candidate.namespace)) return 'namespace';
+  if (filters.excludeHosts.some((pattern) => pattern.test(candidate.host))) return 'host-pattern';
+  return null;
+}
+
+// Redirect-only routes (e.g. an old hostname pointing at a new one) and empty routes have nothing to launch
+function hasBackends(spec: any): boolean {
+  return (spec.rules ?? []).some((rule: any) => (rule.backendRefs ?? []).length > 0);
+}
+
+// Lower is preferred: the internal route of a host wins over its external twin
+function routePreference(candidate: HttpRouteCandidate): number {
+  const externalOnly =
+    candidate.gateways.some((g) => /external|public|dmz/i.test(g)) &&
+    !candidate.gateways.some((g) => /internal/i.test(g));
+  return (externalOnly ? 2 : 0) + (/external/i.test(candidate.name) ? 1 : 0);
+}
+
 function parseHttpRoutes(
   items: any[],
   seenHosts: Set<string>,
-  existingImportedIds: Set<string>
+  existingImportedIds: Set<string>,
+  filters: DiscoveryFilters,
+  excluded: ExcludedRoute[]
 ): DiscoveredRoute[] {
-  const routes: DiscoveredRoute[] = [];
+  // Several routes often serve one host (internal and external gateways): group them first
+  const byHost = new Map<string, HttpRouteCandidate[]>();
 
   for (const item of items) {
     const metadata = item.metadata ?? {};
     const spec = item.spec ?? {};
     const hostnames: string[] = spec.hostnames ?? [];
-
     if (hostnames.length === 0) continue;
-    const primaryHost = hostnames[0];
-    if (seenHosts.has(primaryHost)) continue;
-    seenHosts.add(primaryHost);
 
-    const name = metadata.name ?? 'unnamed-route';
-    const namespace = metadata.namespace ?? 'default';
-    const rule = spec.rules?.[0] ?? {};
-    const backendRef = rule.backendRefs?.[0] ?? {};
-    const trackingId = metadata.annotations?.['argocd.argoproj.io/tracking-id'];
+    const candidate: HttpRouteCandidate = {
+      name: metadata.name ?? 'unnamed-route',
+      namespace: metadata.namespace ?? 'default',
+      host: hostnames[0],
+      gateways: (spec.parentRefs ?? []).map((ref: any) => ref.name).filter(Boolean),
+      metadata,
+      spec,
+    };
 
-    routes.push(
-      buildDiscoveredRoute({
-        idPrefix: 'route',
-        name,
-        namespace,
-        host: primaryHost,
-        path: rule.matches?.[0]?.path?.value ?? '/',
-        gateway: spec.parentRefs?.[0]?.name ?? 'cilium-gateway-l7',
-        backendService: backendRef.name ?? name,
-        port: backendRef.port ?? 80,
-        tlsEnabled: true,
-        creationTimestamp: metadata.creationTimestamp,
-        argoAppName: trackingId ? trackingId.split(':')[0] : undefined,
-        existingImportedIds,
-      })
+    const reason = exclusionReason(candidate, filters) ?? (hasBackends(spec) ? null : 'no-backends');
+    if (reason) {
+      excluded.push({ name: candidate.name, namespace: candidate.namespace, host: candidate.host, reason });
+      continue;
+    }
+
+    const group = byHost.get(candidate.host) ?? [];
+    group.push(candidate);
+    byHost.set(candidate.host, group);
+  }
+
+  const routes: DiscoveredRoute[] = [];
+  for (const [host, candidates] of byHost) {
+    if (seenHosts.has(host)) continue;
+    seenHosts.add(host);
+
+    const [primary, ...others] = [...candidates].sort(
+      (a, b) => routePreference(a) - routePreference(b) || a.name.localeCompare(b.name)
     );
+    const rule = primary.spec.rules?.find((r: any) => (r.backendRefs ?? []).length > 0) ?? {};
+    const backendRef = rule.backendRefs?.[0] ?? {};
+    const trackingId = primary.metadata.annotations?.['argocd.argoproj.io/tracking-id'];
+
+    const route = buildDiscoveredRoute({
+      idPrefix: 'route',
+      name: primary.name,
+      namespace: primary.namespace,
+      host,
+      path: rule.matches?.[0]?.path?.value ?? '/',
+      gateway: primary.gateways[0] ?? 'unknown-gateway',
+      backendService: backendRef.name ?? primary.name,
+      port: backendRef.port ?? 80,
+      tlsEnabled: true,
+      creationTimestamp: primary.metadata.creationTimestamp,
+      argoAppName: trackingId ? trackingId.split(':')[0] : undefined,
+      existingImportedIds,
+    });
+    if (others.length > 0) {
+      route.alternates = others.map((o) => ({ name: o.name, namespace: o.namespace, gateways: o.gateways }));
+    }
+    routes.push(route);
   }
 
   return routes;
@@ -210,7 +300,9 @@ function parseHttpRoutes(
 function parseIngresses(
   items: any[],
   seenHosts: Set<string>,
-  existingImportedIds: Set<string>
+  existingImportedIds: Set<string>,
+  filters: DiscoveryFilters,
+  excluded: ExcludedRoute[]
 ): DiscoveredRoute[] {
   const routes: DiscoveredRoute[] = [];
 
@@ -222,10 +314,15 @@ function parseIngresses(
     for (const rule of rules) {
       const host = rule.host;
       if (!host || seenHosts.has(host)) continue;
-      seenHosts.add(host);
 
       const name = metadata.name ?? 'unnamed-ingress';
       const namespace = metadata.namespace ?? 'default';
+      const reason = exclusionReason({ name, namespace, host, metadata }, filters);
+      if (reason) {
+        excluded.push({ name, namespace, host, reason });
+        continue;
+      }
+      seenHosts.add(host);
       const pathRule = rule.http?.paths?.[0];
       const service = pathRule?.backend?.service;
 
@@ -296,6 +393,7 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
 
   if (!client.isConnected) {
     console.log('[Route Discovery] Running in simulation mode — using sample homelab routes');
+    cachedExcluded = [];
     cachedRoutes = INITIAL_DISCOVERED_ROUTES.map((r) => ({
       ...r,
       status: existingImportedIds.has(r.id) ? 'imported' : r.status,
@@ -306,19 +404,24 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
 
   try {
     const seenHosts = new Set<string>();
+    const filters = getDiscoveryFilters();
+    const excluded: ExcludedRoute[] = [];
     const [httpRouteItems, ingressItems] = await Promise.all([
       fetchHttpRoutes(client),
       fetchIngresses(client),
     ]);
 
     const discovered = [
-      ...parseHttpRoutes(httpRouteItems, seenHosts, existingImportedIds),
-      ...parseIngresses(ingressItems, seenHosts, existingImportedIds),
+      ...parseHttpRoutes(httpRouteItems, seenHosts, existingImportedIds, filters, excluded),
+      ...parseIngresses(ingressItems, seenHosts, existingImportedIds, filters, excluded),
     ].sort((a, b) => a.name.localeCompare(b.name));
 
     cachedRoutes = discovered;
+    cachedExcluded = excluded.sort((a, b) => a.host.localeCompare(b.host));
     lastScannedAt = new Date().toISOString();
-    console.log(`[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster.`);
+    console.log(
+      `[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster (${cachedExcluded.length} excluded).`
+    );
     return cachedRoutes;
   } catch (err: any) {
     const safeErr = String(err?.message || err).replace(/\n|\r/g, '');
@@ -329,6 +432,10 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
 
 export function getCachedRoutes(): DiscoveredRoute[] {
   return cachedRoutes;
+}
+
+export function getExcludedRoutes(): ExcludedRoute[] {
+  return cachedExcluded;
 }
 
 export function getLastScannedAt(): string | null {

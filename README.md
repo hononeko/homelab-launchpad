@@ -147,7 +147,7 @@ For local development, start the backend with an identity, e.g.
 
 ### User Preferences (Valkey)
 
-Each signed-in user's launchpad follows them across devices. The synced state is the service catalog (its order is the display order, plus pins), hidden categories, the default tab, and the ArgoCD and auto-import toggles. It is stored per Authelia user (`Remote-User`); with `AUTH_MODE=none`, everyone shares the `anonymous` profile. Launch counters are incremented atomically on the server. `localStorage` remains the offline cache: if the server can't be reached, changes stay local and are never pushed over the server profile.
+Each signed-in user's launchpad follows them across devices. The synced state is the service catalog (its order is the display order, plus pins and hidden services), hidden categories, hidden discovery routes, the default tab, and the ArgoCD and auto-import toggles. It is stored per Authelia user (`Remote-User`); with `AUTH_MODE=none`, everyone shares the `anonymous` profile. Launch counters are incremented atomically on the server. `localStorage` remains the offline cache: if the server can't be reached, changes stay local and are never pushed over the server profile.
 
 | Endpoint | Description |
 |---|---|
@@ -161,6 +161,20 @@ Each signed-in user's launchpad follows them across devices. The synced state is
 
 > Deployment: unlike the cache-only Valkey instances elsewhere in the cluster, this one must
 > persist data. Run it with `--appendonly yes` on a persistent volume (e.g. `longhorn-retain`).
+
+### Route Discovery
+
+Administrators import services from the cluster's Gateway API HTTPRoutes and Ingresses. When several HTTPRoutes serve the same host (typically an internal and an external twin), discovery lists it once: it prefers a route attached to an internal gateway over an external-only one, and otherwise a route whose name doesn't contain `external`. The other routes are shown as alternates. Routes without any backend (redirect-only or empty) are skipped.
+
+Routes can be left out of discovery on the server, for every user:
+
+| Setting | Description |
+|---|---|
+| `DISCOVERY_EXCLUDE_NAMESPACES` | Comma-separated namespaces whose routes are never listed, e.g. `kube-system,cert-manager` |
+| `DISCOVERY_EXCLUDE_HOSTS` | Comma-separated host globs (`*` matches anything, case-insensitive), e.g. `*-webhook.kerrlab.app,metrics.*` |
+| Annotation `launchpad.kerrlab.app/hidden: "true"` | Set on an HTTPRoute or Ingress to leave it out |
+
+The discovery dialog lists excluded routes with the reason. Each user can also hide routes from their own discovery list, and hide services from their dashboard; hidden services are listed at the bottom of the Services view to unhide.
 
 ### Service Health Probes
 

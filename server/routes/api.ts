@@ -3,6 +3,7 @@ import { getK8sClient } from '../k8s/client';
 import {
   scanClusterRoutes,
   getCachedRoutes,
+  getExcludedRoutes,
   getLastScannedAt,
   markRouteImported,
 } from '../k8s/discovery';
@@ -137,6 +138,7 @@ apiRouter.get('/routes', requireAdmin, async (req: Request, res: Response) => {
     res.json({
       success: true,
       routes,
+      excluded: getExcludedRoutes(),
       lastScannedAt: getLastScannedAt(),
       count: routes.length,
     });
@@ -155,20 +157,17 @@ apiRouter.post('/routes/scan', requireAdmin, async (req: Request, res: Response)
   try {
     const existingImported = req.body?.importedIds ? new Set<string>(req.body.importedIds) : new Set<string>();
     const routes = await scanClusterRoutes(existingImported);
+    const update = {
+      routes,
+      excluded: getExcludedRoutes(),
+      lastScannedAt: getLastScannedAt(),
+      count: routes.length,
+    };
 
     // Broadcast update to all connected SSE clients
-    broadcastAdminSSE('routes:updated', {
-      routes,
-      lastScannedAt: getLastScannedAt(),
-      count: routes.length,
-    });
+    broadcastAdminSSE('routes:updated', update);
 
-    res.json({
-      success: true,
-      routes,
-      lastScannedAt: getLastScannedAt(),
-      count: routes.length,
-    });
+    res.json({ success: true, ...update });
   } catch (error: any) {
     const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
     console.error('[API] /routes/scan error: %s', safeErr);

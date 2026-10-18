@@ -3,6 +3,7 @@ import {
   ServiceItem,
   ArgoApplication,
   DiscoveredHTTPRoute,
+  ExcludedRoute,
   ClusterTelemetry,
   ClusterNode,
   ServiceHealth,
@@ -31,6 +32,7 @@ import { ClusterModal } from './components/ClusterModal';
 import { ConfigView } from './components/ConfigView';
 import { Footer } from './components/Footer';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { HiddenServicesPanel } from './components/HiddenServicesPanel';
 import { usePreferencesSync } from './hooks/usePreferencesSync';
 
 // Stored and synced values are untrusted: each reader rebuilds the value from
@@ -54,6 +56,17 @@ function asTab(value: unknown): TabFilter {
 
 function asCategories(value: unknown): ServiceCategory[] {
   return Array.isArray(value) ? SERVICE_CATEGORIES.filter((category) => value.includes(category)) : [];
+}
+
+const ROUTE_ID_PATTERN = /^[\w.:-]{1,200}$/;
+
+function asRouteIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id): id is string => typeof id === 'string' && ROUTE_ID_PATTERN.test(id)))];
+}
+
+function asExcludedRoutes(value: unknown): ExcludedRoute[] | null {
+  return Array.isArray(value) ? (value as ExcludedRoute[]) : null;
 }
 
 export default function App() {
@@ -82,6 +95,10 @@ export default function App() {
 
   const [argoApps, setArgoApps] = useState<ArgoApplication[]>(INITIAL_ARGO_APPS);
   const [discoveredRoutes, setDiscoveredRoutes] = useState<DiscoveredHTTPRoute[]>(INITIAL_DISCOVERED_ROUTES);
+  const [excludedRoutes, setExcludedRoutes] = useState<ExcludedRoute[]>([]);
+  const [hiddenRouteIds, setHiddenRouteIds] = useState<string[]>(() =>
+    asRouteIds(readStored('launchpad_hidden_routes'))
+  );
 
   const [argoEnabled, setArgoEnabled] = useState<boolean>(() => asBoolean(readStored('kerrlab_argo_enabled'), true));
 
@@ -166,6 +183,7 @@ export default function App() {
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) {
+            setExcludedRoutes(asExcludedRoutes(data.excluded) ?? []);
             setDiscoveredRoutes((prev) => {
               const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
               return data.routes.map((r: DiscoveredHTTPRoute) => ({
@@ -209,6 +227,7 @@ export default function App() {
         try {
           const payload = JSON.parse(e.data);
           if (payload?.routes) {
+            setExcludedRoutes(asExcludedRoutes(payload.excluded) ?? []);
             setDiscoveredRoutes((prev) => {
               const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
               return payload.routes.map((r: DiscoveredHTTPRoute) => ({
@@ -281,8 +300,8 @@ export default function App() {
 
   // Settings follow the signed-in user across devices; localStorage stays as the offline cache
   const syncedSettings = useMemo(
-    () => ({ services, hiddenCategories, defaultTab, argoEnabled, autoSyncRoutes }),
-    [services, hiddenCategories, defaultTab, argoEnabled, autoSyncRoutes]
+    () => ({ services, hiddenCategories, hiddenRouteIds, defaultTab, argoEnabled, autoSyncRoutes }),
+    [services, hiddenCategories, hiddenRouteIds, defaultTab, argoEnabled, autoSyncRoutes]
   );
   const { syncState, persisted, recordLaunch } = usePreferencesSync({
     enabled: isAuthenticated,
@@ -290,6 +309,7 @@ export default function App() {
     apply: (prefs: UserPreferences) => {
       setServices(prefs.services);
       setHiddenCategories(asCategories(prefs.hiddenCategories));
+      setHiddenRouteIds(asRouteIds(prefs.hiddenRouteIds));
       setDefaultTab(asTab(prefs.defaultTab));
       setActiveTab(asTab(prefs.defaultTab));
       setArgoEnabled(asBoolean(prefs.argoEnabled, true));
@@ -298,16 +318,21 @@ export default function App() {
   });
 
   // Viewers only see services in the categories they are authorized for, and
-  // nothing is shown until the session confirms a signed-in user. Categories
-  // the user hid are left out for everyone.
-  const visibleServices = useMemo(() => {
+  // nothing is shown until the session confirms a signed-in user
+  const authorizedServices = useMemo(() => {
     if (!session?.authenticated) return [];
-    const hidden = new Set(hiddenCategories);
-    const shown = services.filter((s) => !hidden.has(s.category));
-    if (isAdmin) return shown;
+    if (isAdmin) return services;
     const allowed = new Set(session.viewerCategories);
-    return shown.filter((s) => allowed.has(s.category));
-  }, [services, session, isAdmin, hiddenCategories]);
+    return services.filter((s) => allowed.has(s.category));
+  }, [services, session, isAdmin]);
+
+  // Categories and services the user hid are left off the dashboard
+  const visibleServices = useMemo(() => {
+    const hidden = new Set(hiddenCategories);
+    return authorizedServices.filter((s) => !s.hidden && !hidden.has(s.category));
+  }, [authorizedServices, hiddenCategories]);
+
+  const hiddenServices = useMemo(() => authorizedServices.filter((s) => s.hidden), [authorizedServices]);
 
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
@@ -361,6 +386,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('launchpad_default_tab', JSON.stringify(asTab(defaultTab)));
   }, [defaultTab]);
+
+  useEffect(() => {
+    localStorage.setItem('launchpad_hidden_routes', JSON.stringify(asRouteIds(hiddenRouteIds)));
+  }, [hiddenRouteIds]);
 
   // Global keydown handler for ⌘K and /
   useEffect(() => {
@@ -454,6 +483,18 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
     );
   };
 
+  // Hidden services stay in the catalog (and keep their stats) but leave the dashboard
+  const handleSetServiceHidden = (id: string, hidden: boolean) => {
+    const service = services.find((s) => s.id === id);
+    // `undefined` rather than `false` keeps unhidden services identical to never-hidden ones once serialized
+    setServices((prev) => prev.map((s) => (s.id === id ? { ...s, hidden: hidden || undefined } : s)));
+    if (service) showToast(hidden ? `Hid ${service.name} from the dashboard` : `${service.name} is back on the dashboard`);
+  };
+
+  const handleToggleRouteHidden = (routeId: string) => {
+    setHiddenRouteIds((prev) => (prev.includes(routeId) ? prev.filter((id) => id !== routeId) : [...prev, routeId]));
+  };
+
   // Auto-Discovery actions
   const handleScanClusterRoutes = async () => {
     setIsScanningRoutes(true);
@@ -468,6 +509,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         const data = await res.json();
         if (data?.routes) {
           setDiscoveredRoutes(data.routes);
+          setExcludedRoutes(asExcludedRoutes(data.excluded) ?? []);
           showToast(`Cluster scan complete: ${data.count} HTTPRoutes verified via Gateway API`);
         }
       } else {
@@ -524,7 +566,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
   };
 
   const handleImportAllRoutes = () => {
-    const pending = discoveredRoutes.filter((r) => r.status === 'pending');
+    const hidden = new Set(hiddenRouteIds);
+    const pending = discoveredRoutes.filter((r) => r.status === 'pending' && !hidden.has(r.id));
     pending.forEach((r) => handleImportRoute(r));
     showToast(`Batch imported ${pending.length} HTTPRoutes`);
   };
@@ -915,6 +958,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                         showArgoIntegration={argoEnabled}
                         onTogglePin={handleTogglePin}
                         onLaunch={handleLaunchService}
+                        onHide={(id) => handleSetServiceHidden(id, true)}
                       />
                     );
                   })}
@@ -1010,6 +1054,13 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                       })}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Hidden services: also here because the Services view has no mobile entry point */}
+              {activeTab === 'all' && !searchQuery && hiddenServices.length > 0 && (
+                <div className="pt-2">
+                  <HiddenServicesPanel services={hiddenServices} onUnhide={(id) => handleSetServiceHidden(id, false)} />
                 </div>
               )}
 
@@ -1114,6 +1165,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                               showArgoIntegration={argoEnabled}
                               onTogglePin={handleTogglePin}
                               onLaunch={handleLaunchService}
+                              onHide={(id) => handleSetServiceHidden(id, true)}
                             />
                           ))}
                         </div>
@@ -1122,6 +1174,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                   }
                 )
               )}
+
+              <HiddenServicesPanel services={hiddenServices} onUnhide={(id) => handleSetServiceHidden(id, false)} />
             </div>
           )}
 
@@ -1201,6 +1255,9 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         autoSyncEnabled={autoSyncRoutes}
         onToggleAutoSync={() => setAutoSyncRoutes(!autoSyncRoutes)}
         onAddCustomRoute={handleAddCustomRoute}
+        hiddenRouteIds={hiddenRouteIds}
+        onToggleRouteHidden={handleToggleRouteHidden}
+        excludedRoutes={excludedRoutes}
         k8sStatus={k8sStatus}
       />
 

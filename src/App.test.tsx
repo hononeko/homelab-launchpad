@@ -340,6 +340,74 @@ describe('App navigation', () => {
   });
 });
 
+describe('App hiding', () => {
+  test('a hidden service leaves the dashboard and comes back from the services view', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Mealie');
+
+    fireEvent.click(screen.getByLabelText('Hide Mealie from dashboard'));
+    await waitFor(() => expect(screen.queryByText('Mealie')).toBeNull());
+    const saved = JSON.parse(localStorage.getItem('launchpad_services')!);
+    expect(saved.find((s: ServiceItem) => s.id === 'imported-mealie').hidden).toBe(true);
+
+    fireEvent.click(screen.getByText('Services'));
+    fireEvent.click(await screen.findByText('Hidden services (1)'));
+    fireEvent.click(screen.getByText('Unhide'));
+    expect(await screen.findByText('Mealie is back on the dashboard')).toBeDefined();
+    expect(screen.queryByText(/Hidden services/)).toBeNull();
+  });
+
+  test('hidden services can also be unhidden from the All Services tab', async () => {
+    localStorage.setItem('launchpad_services', JSON.stringify([SERVICES[0], { ...SERVICES[1], hidden: true }]));
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Jellyfin');
+    expect(screen.queryByText(/Hidden services/)).toBeNull();
+
+    fireEvent.click(screen.getByText('All Services'));
+    fireEvent.click(await screen.findByText('Hidden services (1)'));
+    fireEvent.click(screen.getByText('Unhide'));
+    expect(await screen.findByText('Mealie')).toBeDefined();
+  });
+
+  test('viewers are not shown hidden services outside their categories', async () => {
+    localStorage.setItem('launchpad_services', JSON.stringify(SERVICES.map((s) => ({ ...s, hidden: true }))));
+    installApi(session('viewer'));
+    render(<App />);
+    await waitFor(() => expect(requested('/api/auth/me')).toBe(true));
+
+    fireEvent.click(await screen.findByText('Services'));
+    // Grafana is in a category viewers may not see
+    expect(await screen.findByText('Hidden services (2)')).toBeDefined();
+  });
+
+  test('hidden routes are synced and skipped by Import All', async () => {
+    await renderAsAdmin({
+      '/api/routes': {
+        body: {
+          success: true,
+          routes: [...ROUTES, makeRoute({ id: 'route-apps-hooks', name: 'Hooks', host: 'hooks.example.com' })],
+          excluded: [{ name: 'old', namespace: 'apps', host: 'old.example.com', reason: 'no-backends' }],
+        },
+      },
+    });
+    fireEvent.click(screen.getByTitle('Auto-discover Kubernetes HTTPRoutes'));
+    await screen.findByText('hooks.example.com');
+    expect(screen.getByText('1 route excluded by the server')).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText('Hide hooks.example.com'));
+    await waitFor(() => expect(screen.queryByText('hooks.example.com')).toBeNull());
+    expect(JSON.parse(localStorage.getItem('launchpad_hidden_routes')!)).toEqual(['route-apps-hooks']);
+
+    fireEvent.click(screen.getByText('Import All (1)'));
+    expect(await screen.findByText('Imported Immich into Launchpad!')).toBeDefined();
+    expect(posted('/api/routes/import').map((r) => JSON.parse(String(r.init!.body)).routeId)).toEqual([
+      'route-media-immich',
+    ]);
+  });
+});
+
 describe('App preference sync', () => {
   const puts = () => requests.filter((r) => r.url === '/api/user/preferences' && r.init?.method === 'PUT');
   const settle = () => new Promise((resolve) => setTimeout(resolve, 800));
@@ -373,6 +441,21 @@ describe('App preference sync', () => {
     expect(screen.getByText('SORTED BY: LAUNCH FREQUENCY')).toBeDefined();
     await settle();
     expect(puts()).toHaveLength(0);
+  });
+
+  test('hidden services and routes from the profile are applied', async () => {
+    installApi(
+      session('viewer'),
+      serverPrefs({
+        services: [makeService({ isPinned: true }), { ...SERVICES[1], hidden: true }],
+        hiddenRouteIds: ['route-apps-hooks', 'not a valid id'],
+      })
+    );
+    render(<App />);
+
+    await waitFor(() => expect(requested('/api/user/preferences')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Mealie')).toBeNull());
+    expect(JSON.parse(localStorage.getItem('launchpad_hidden_routes')!)).toEqual(['route-apps-hooks']);
   });
 
   test('hidden categories from the profile hide services', async () => {

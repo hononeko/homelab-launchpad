@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DiscoveredHTTPRoute, ServiceItem } from '../types';
+import { DiscoveredHTTPRoute, ExcludedRoute, ExclusionReason, RouteAlternate } from '../types';
 
 interface AutoDiscoveryModalProps {
   isOpen: boolean;
@@ -12,11 +12,27 @@ interface AutoDiscoveryModalProps {
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
   onAddCustomRoute: (route: Partial<DiscoveredHTTPRoute>) => void;
+  hiddenRouteIds?: string[];
+  onToggleRouteHidden?: (routeId: string) => void;
+  // Routes the server left out (annotation, env filters, no backends)
+  excludedRoutes?: ExcludedRoute[];
   k8sStatus?: {
     connected: boolean;
     server: string | null;
     mode: string;
   };
+}
+
+const EXCLUSION_LABELS: Record<ExclusionReason, string> = {
+  annotation: 'hidden by annotation',
+  namespace: 'excluded namespace',
+  'host-pattern': 'excluded host pattern',
+  'no-backends': 'redirect or no backend',
+};
+
+function describeAlternates(alternates: RouteAlternate[]): string {
+  const list = alternates.map((a) => `${a.namespace}/${a.name} (${a.gateways.join(', ') || 'no gateway'})`);
+  return `Also served by: ${list.join('; ')}`;
 }
 
 export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
@@ -30,9 +46,13 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   autoSyncEnabled,
   onToggleAutoSync,
   onAddCustomRoute,
+  hiddenRouteIds = [],
+  onToggleRouteHidden,
+  excludedRoutes = [],
   k8sStatus,
 }) => {
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
+  const [showHidden, setShowHidden] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newHost, setNewHost] = useState('');
   const [newName, setNewName] = useState('');
@@ -41,12 +61,17 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
 
   if (!isOpen) return null;
 
-  const namespaces = ['all', ...Array.from(new Set(discoveredRoutes.map((r) => r.namespace)))];
-  const filteredRoutes = selectedNamespace === 'all'
-    ? discoveredRoutes
-    : discoveredRoutes.filter((r) => r.namespace === selectedNamespace);
+  const hidden = new Set(hiddenRouteIds);
+  const hiddenCount = discoveredRoutes.filter((r) => hidden.has(r.id)).length;
+  const listedRoutes = showHidden ? discoveredRoutes : discoveredRoutes.filter((r) => !hidden.has(r.id));
 
-  const pendingCount = discoveredRoutes.filter((r) => r.status === 'pending').length;
+  const namespaces = ['all', ...Array.from(new Set(listedRoutes.map((r) => r.namespace)))];
+  const filteredRoutes = selectedNamespace === 'all'
+    ? listedRoutes
+    : listedRoutes.filter((r) => r.namespace === selectedNamespace);
+
+  // Hidden routes are never imported in bulk
+  const pendingCount = discoveredRoutes.filter((r) => r.status === 'pending' && !hidden.has(r.id)).length;
 
   const handleCustomSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -278,6 +303,23 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
               {ns}
             </button>
           ))}
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowHidden(!showHidden)}
+              aria-pressed={showHidden}
+              className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+                showHidden
+                  ? 'bg-[#283141] text-white border-[#3a4558]'
+                  : 'bg-[#151921] text-[#94A3B8] hover:text-white border-[#1C212B]'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[13px]">
+                {showHidden ? 'visibility' : 'visibility_off'}
+              </span>
+              <span>Show hidden ({hiddenCount})</span>
+            </button>
+          )}
         </div>
 
         {/* Discovered Routes Table / List */}
@@ -297,13 +339,17 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
           ) : (
             filteredRoutes.map((route) => {
               const isImported = route.status === 'imported';
+              const isHidden = hidden.has(route.id);
 
               return (
                 <div
                   key={route.id}
-                  className="p-3 rounded-xl bg-[#0A0C10] border border-[#1C212B] hover:border-[#283141] flex items-center justify-between gap-3 group transition-colors"
+                  className={`p-3 rounded-xl bg-[#0A0C10] border border-[#1C212B] hover:border-[#283141] flex flex-wrap items-center justify-between gap-3 group transition-colors ${
+                    isHidden ? 'opacity-60' : ''
+                  }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  {/* Details keep at least 14rem; on narrow cards the actions wrap below them */}
+                  <div className="flex items-center gap-3 min-w-0 flex-[1_1_14rem]">
                     <div className="w-8 h-8 rounded-lg bg-[#151921] border border-[#283141] flex items-center justify-center text-[#94A3B8] shrink-0">
                       <span className="material-symbols-outlined text-[17px]">
                         {route.suggestedIcon || 'alt_route'}
@@ -323,6 +369,15 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                             lock
                           </span>
                         )}
+                        {route.alternates && route.alternates.length > 0 && (
+                          <span
+                            className="flex items-center gap-0.5 font-mono text-[9px] px-1.5 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]"
+                            title={describeAlternates(route.alternates)}
+                          >
+                            <span className="material-symbols-outlined text-[11px]">alt_route</span>
+                            <span>+{route.alternates.length}</span>
+                          </span>
+                        )}
                       </div>
                       {/* Host, then backend, on their own lines: long values wrap (at spaces
                           first) instead of being truncated; the tooltip carries them in full */}
@@ -340,7 +395,20 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 ml-auto">
+                    {onToggleRouteHidden && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleRouteHidden(route.id)}
+                        className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] transition-colors"
+                        title={isHidden ? 'Unhide route' : 'Hide route from this list'}
+                        aria-label={`${isHidden ? 'Unhide' : 'Hide'} ${route.host}`}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          {isHidden ? 'visibility' : 'visibility_off'}
+                        </span>
+                      </button>
+                    )}
                     {isImported ? (
                       <span className="flex items-center gap-1 font-mono text-[11px] text-[#67df70] bg-[#67df70]/10 px-2 py-1 rounded border border-[#67df70]/30">
                         <span className="material-symbols-outlined text-[14px]">check</span>
@@ -361,6 +429,24 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                 </div>
               );
             })
+          )}
+
+          {excludedRoutes.length > 0 && (
+            <details className="col-span-full rounded-xl border border-dashed border-[#1C212B] font-mono text-[11px] text-[#64748B]">
+              <summary className="px-3 py-2 cursor-pointer select-none hover:text-[#94A3B8]">
+                {excludedRoutes.length} {excludedRoutes.length === 1 ? 'route' : 'routes'} excluded by the server
+              </summary>
+              <ul className="px-3 pb-2 flex flex-col gap-1">
+                {excludedRoutes.map((r) => (
+                  <li key={`${r.namespace}/${r.name}`} className="flex flex-wrap gap-x-2">
+                    <span className="text-[#94A3B8] wrap-anywhere">{r.host}</span>
+                    <span>
+                      {r.namespace}/{r.name} • {EXCLUSION_LABELS[r.reason]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
 

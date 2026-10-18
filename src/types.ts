@@ -15,6 +15,8 @@ export interface ServiceItem {
   argoAppName?: string;
   discoveredFrom?: 'httproute' | 'ingress' | 'manual';
   custom?: boolean;
+  // Kept in the catalog but left off the dashboard; unhidden from the Config view
+  hidden?: boolean;
 }
 
 export interface ArgoApplication {
@@ -45,6 +47,24 @@ export interface DiscoveredHTTPRoute {
   suggestedCategory: 'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS';
   suggestedIcon: string;
   argoAppName?: string;
+  // Other routes serving the same host (e.g. the external twin of an internal route)
+  alternates?: RouteAlternate[];
+}
+
+export interface RouteAlternate {
+  name: string;
+  namespace: string;
+  gateways: string[];
+}
+
+export type ExclusionReason = 'annotation' | 'namespace' | 'host-pattern' | 'no-backends';
+
+/** A route the server left out of discovery, reported so the UI can explain why it's missing. */
+export interface ExcludedRoute {
+  name: string;
+  namespace: string;
+  host: string;
+  reason: ExclusionReason;
 }
 
 export interface ClusterTelemetry {
@@ -131,6 +151,8 @@ export interface UserPreferences {
   // The user's service catalog; array order is the display order
   services: ServiceItem[];
   hiddenCategories: ServiceCategory[];
+  // Discovered routes the user hid from the discovery list
+  hiddenRouteIds: string[];
   defaultTab: TabFilter;
   argoEnabled: boolean;
   autoSyncRoutes: boolean;

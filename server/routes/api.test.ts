@@ -159,6 +159,8 @@ describe('administrator actions (simulation mode)', () => {
     expect(scan.success).toBe(true);
     expect(scan.count).toBe(initial.length);
     expect(scan.routes.find((r: { id: string }) => r.id === importedId).status).toBe('imported');
+    // Simulation mode excludes nothing, but clients can always rely on the list
+    expect(scan.excluded).toEqual([]);
   });
 
   test('route import validates the route id', async () => {
