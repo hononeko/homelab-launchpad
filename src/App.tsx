@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ServiceItem,
   ServiceIdentity,
   RouteOverride,
   ScalableWorkload,
+  WorkloadState,
   ArgoApplication,
   DiscoveredHTTPRoute,
   ExcludedRoute,
@@ -450,6 +451,17 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
   }
   return null;
 }
+
+  // Announce workloads that finish starting while the dashboard is open
+  const previousWorkloadStates = useRef(new Map<string, WorkloadState>());
+  useEffect(() => {
+    for (const workload of workloads) {
+      if (previousWorkloadStates.current.get(workloadKey(workload)) === 'starting' && workload.state === 'running') {
+        showToast(`${workload.name} is up and running`);
+      }
+    }
+    previousWorkloadStates.current = new Map(workloads.map((w) => [workloadKey(w), w.state]));
+  }, [workloads]);
 
   const workloadProps = (service: ServiceItem) => {
     const workload = workloadFor(service);

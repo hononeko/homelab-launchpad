@@ -369,6 +369,20 @@ describe('App administrator flows', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  test('a workload that finishes starting is announced', async () => {
+    const running = { kind: 'StatefulSet', namespace: 'games', name: 'satisfactory', desiredReplicas: 1, readyReplicas: 1, state: 'running' };
+    window.confirm = mock(() => true) as unknown as typeof window.confirm;
+    await renderAsAdmin({
+      // The list always reports it running; the scale answer says it is starting
+      '/api/workloads': { body: { success: true, workloads: [running] } },
+      '/api/workloads/games/statefulset/satisfactory/scale': {
+        body: { success: true, workload: { ...running, readyReplicas: 0, state: 'starting' } },
+      },
+    });
+    fireEvent.click(await screen.findByLabelText('Stop satisfactory'));
+    expect(await screen.findByText('satisfactory is up and running')).toBeDefined();
+  });
+
   test('stopping a workload asks first and reports failures', async () => {
     const running = { kind: 'Deployment', namespace: 'games', name: 'builder', desiredReplicas: 1, readyReplicas: 1, state: 'running' };
     window.confirm = mock(() => false) as unknown as typeof window.confirm;

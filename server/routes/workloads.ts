@@ -7,7 +7,7 @@ import {
   scaleWorkload,
   WorkloadError,
 } from '../k8s/workloads';
-import { errorMessage } from '../util/errorMessage';
+import { errorMessage, singleLine } from '../util/errorMessage';
 
 /** Sleep (0 replicas) and wake (1) for opted-in workloads; administrators only. */
 export const workloadsRouter = Router();
@@ -37,8 +37,14 @@ workloadsRouter.post('/workloads/:namespace/:kind/:name/scale', requireAdmin, as
   const name = String(req.params.name);
   try {
     const workload = await scaleWorkload(namespace, kind, name, replicas);
-    // Logged after the lookup succeeded, so namespace and name are known workload names
-    console.log('[Workloads] %s scaled %s/%s to %d', getRequestUser(res)?.username, namespace, name, replicas);
+    // Names come from the cluster's answer, the username from a header: neither may break the log line
+    console.log(
+      '[Workloads] %s scaled %s/%s to %d',
+      singleLine(getRequestUser(res)?.username ?? 'unknown'),
+      singleLine(workload.namespace),
+      singleLine(workload.name),
+      workload.desiredReplicas
+    );
     res.json({ success: true, workload });
   } catch (error) {
     if (error instanceof WorkloadError) {
