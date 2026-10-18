@@ -30,10 +30,13 @@ export interface DiscoveryFilters {
   excludeHosts: RegExp[];
 }
 
+function escapeRegExp(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 /** Case-insensitive match for a host glob where `*` matches any characters. */
 export function globToRegExp(glob: string): RegExp {
-  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, String.raw`\$&`).replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`, 'i');
+  return new RegExp(`^${glob.split('*').map(escapeRegExp).join('.*')}$`, 'i');
 }
 
 function csv(value: string | undefined): string[] {
@@ -416,8 +419,9 @@ export async function scanClusterRoutes(existingImportedIds: Set<string> = new S
       ...parseIngresses(ingressItems, seenHosts, existingImportedIds, filters, excluded),
     ].sort((a, b) => a.name.localeCompare(b.name));
 
+    excluded.sort((a, b) => a.host.localeCompare(b.host));
     cachedRoutes = discovered;
-    cachedExcluded = excluded.sort((a, b) => a.host.localeCompare(b.host));
+    cachedExcluded = excluded;
     lastScannedAt = new Date().toISOString();
     console.log(
       `[Route Discovery] Scanned ${cachedRoutes.length} active routes from cluster (${cachedExcluded.length} excluded).`
