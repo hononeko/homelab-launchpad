@@ -42,25 +42,26 @@ type Feedback = { tone: 'ok' | 'error'; text: string } | null;
 function Highlighted({ text, indices }: Readonly<{ text: string; indices: number[] }>) {
   if (indices.length === 0) return <>{text}</>;
   const marked = new Set(indices);
-  const parts: Array<{ text: string; match: boolean }> = [];
+  // Runs of matched or unmatched characters, keyed by where they start
+  const parts: Array<{ start: number; text: string; match: boolean }> = [];
   for (const [i, char] of Array.from(text).entries()) {
     const match = marked.has(i);
     const last = parts.at(-1);
     if (last?.match === match) last.text += char;
-    else parts.push({ text: char, match });
+    else parts.push({ start: i, text: char, match });
   }
   return (
     <>
-      {parts.map((part, i) =>
+      {parts.map((part) =>
         part.match ? (
           <mark
-            key={i}
+            key={part.start}
             className="bg-transparent text-[#67df70] underline decoration-[#67df70]/40 decoration-2 underline-offset-4 font-semibold"
           >
             {part.text}
           </mark>
         ) : (
-          <React.Fragment key={i}>{part.text}</React.Fragment>
+          <React.Fragment key={part.start}>{part.text}</React.Fragment>
         )
       )}
     </>
@@ -121,6 +122,84 @@ function Hint({ keys, label }: Readonly<{ keys: string[]; label: string }>) {
       ))}
       <span>{label}</span>
     </span>
+  );
+}
+
+interface CategoryFiltersProps {
+  categories: ServiceCategory[];
+  value: ServiceCategory | null;
+  onChange: (category: ServiceCategory | null) => void;
+}
+
+function CategoryFilters({ categories, value, onChange }: Readonly<CategoryFiltersProps>) {
+  return (
+    <fieldset className="flex flex-wrap gap-1.5 px-4 sm:px-6 py-2 border-b border-[#1C212B]">
+      <legend className="sr-only">Filter by category</legend>
+      {[null, ...categories].map((option) => (
+        <button
+          key={option ?? 'all'}
+          type="button"
+          tabIndex={-1}
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+          className={`px-2 py-0.5 rounded-md font-mono text-[10px] border transition-colors ${
+            value === option
+              ? 'bg-[#67df70]/10 border-[#67df70]/40 text-[#67df70]'
+              : 'bg-[#151921] border-[#283141] text-[#94A3B8] hover:text-white'
+          }`}
+        >
+          {option ?? 'ALL'}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+interface EmptyResultsProps {
+  commandMode: boolean;
+  search: string;
+  category: ServiceCategory | null;
+}
+
+function EmptyResults({ commandMode, search, category }: Readonly<EmptyResultsProps>) {
+  const scope = category ? ` in ${category}` : '';
+  const message = commandMode
+    ? `No commands match "${search.trim()}"`
+    : `No matching services for "${search.trim()}"${scope}`;
+  return (
+    <div className="py-12 text-center flex flex-col items-center justify-center">
+      <span className="material-symbols-outlined text-[32px] mb-2 text-[#475569]">search_off</span>
+      <p className="font-mono text-[13px] text-[#94A3B8]">{message}</p>
+      <p className="font-mono text-[11px] text-[#64748B] mt-1">
+        {commandMode ? 'Delete the > to search services' : 'Type > to run a command instead'}
+      </p>
+    </div>
+  );
+}
+
+interface FooterProps {
+  count: number;
+  commandMode: boolean;
+  hasCategories: boolean;
+}
+
+function PaletteFooter({ count, commandMode, hasCategories }: Readonly<FooterProps>) {
+  return (
+    <div className="px-4 sm:px-6 py-2.5 bg-[#07090D]/80 border-t border-[#1C212B] flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div className="flex items-center gap-2 font-mono text-[11px] text-[#94A3B8]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#67df70]"></span>
+        <span>
+          {count} {commandMode ? 'matching commands' : 'matching services'}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-3 font-mono text-[10px] text-[#64748B]">
+        <Hint keys={['↑', '↓']} label="navigate" />
+        <Hint keys={['↵']} label={commandMode ? 'run' : 'launch'} />
+        {!commandMode && <Hint keys={['⇧', '↵']} label="copy url" />}
+        {!commandMode && hasCategories && <Hint keys={['tab']} label="category" />}
+        <Hint keys={['esc']} label="dismiss" />
+      </div>
+    </div>
   );
 }
 
@@ -213,32 +292,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     else launch(target as ServiceItem);
   };
 
+  const count = Math.max(visible.length, 1);
+  const keyActions: Record<string, (shift: boolean) => void> = {
+    Escape: onClose,
+    ArrowDown: () => setSelectedIndex((selected + 1) % count),
+    ArrowUp: () => setSelectedIndex((selected - 1 + count) % count),
+    Enter: activate,
+    // Tab cycles the category filters instead of leaving the search field
+    Tab: (shift) => cycleCategory(shift ? -1 : 1),
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const count = Math.max(visible.length, 1);
-    switch (e.key) {
-      case 'Escape':
-        e.preventDefault();
-        onClose();
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        setSelectedIndex((selected + 1) % count);
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setSelectedIndex((selected - 1 + count) % count);
-        break;
-      case 'Enter':
-        e.preventDefault();
-        activate(e.shiftKey);
-        break;
-      case 'Tab':
-        // Tab cycles the category filters instead of leaving the search field
-        if (commandMode) break;
-        e.preventDefault();
-        cycleCategory(e.shiftKey ? -1 : 1);
-        break;
-    }
+    const action = keyActions[e.key];
+    // In command mode there are no filters, so Tab keeps its usual meaning
+    if (!action || (commandMode && e.key === 'Tab')) return;
+    e.preventDefault();
+    action(e.shiftKey);
   };
 
   const chooseCategory = (next: ServiceCategory | null) => {
@@ -276,21 +345,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     </ResultRow>
   );
 
-  const emptyMessage = commandMode
-    ? `No commands match "${search.trim()}"`
-    : `No matching services for "${query.trim()}"${category ? ` in ${category}` : ''}`;
-
   return (
     <dialog
       ref={dialogRef}
       aria-label="Command palette"
+      // Light dismiss: the browser turns a click outside the panel into `cancel`
+      {...{ closedby: 'any' }}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
-      }}
-      onClick={(e) => {
-        // A click outside the panel lands on the dialog element itself (its backdrop)
-        if (e.target === e.currentTarget) onClose();
       }}
       className="mt-16 sm:mt-24 mx-auto w-[calc(100%-2rem)] max-w-[640px] p-0 bg-transparent backdrop:bg-[#07090D]/80 backdrop:backdrop-blur-md"
     >
@@ -337,36 +400,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         </div>
 
         {!commandMode && categories.length > 1 && (
-          <fieldset className="flex flex-wrap gap-1.5 px-4 sm:px-6 py-2 border-b border-[#1C212B]">
-            <legend className="sr-only">Filter by category</legend>
-            {[null, ...categories].map((option) => (
-              <button
-                key={option ?? 'all'}
-                type="button"
-                tabIndex={-1}
-                aria-pressed={category === option}
-                onClick={() => chooseCategory(option)}
-                className={`px-2 py-0.5 rounded-md font-mono text-[10px] border transition-colors ${
-                  category === option
-                    ? 'bg-[#67df70]/10 border-[#67df70]/40 text-[#67df70]'
-                    : 'bg-[#151921] border-[#283141] text-[#94A3B8] hover:text-white'
-                }`}
-              >
-                {option ?? 'ALL'}
-              </button>
-            ))}
-          </fieldset>
+          <CategoryFilters categories={categories} value={category} onChange={chooseCategory} />
         )}
 
         <div ref={listRef} className="px-3 sm:px-4 py-2 flex flex-col gap-1 max-h-[min(440px,60vh)] overflow-y-auto scrollbar-subtle">
           {visible.length === 0 ? (
-            <div className="py-12 text-center flex flex-col items-center justify-center">
-              <span className="material-symbols-outlined text-[32px] mb-2 text-[#475569]">search_off</span>
-              <p className="font-mono text-[13px] text-[#94A3B8]">{emptyMessage}</p>
-              <p className="font-mono text-[11px] text-[#64748B] mt-1">
-                {commandMode ? 'Delete the > to search services' : 'Type > to run a command instead'}
-              </p>
-            </div>
+            <EmptyResults commandMode={commandMode} search={search} category={category} />
           ) : (
             <>
               <SectionHeading
@@ -374,27 +413,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 detail={results.length > visible.length ? `TOP ${visible.length} OF ${results.length}` : undefined}
               />
               {commandMode
-                ? (visible as RankedItem<PaletteCommand>[]).map(renderCommand)
-                : (visible as RankedItem<ServiceItem>[]).map(renderService)}
+                ? (visible as RankedItem<PaletteCommand>[]).map((result, index) => renderCommand(result, index))
+                : (visible as RankedItem<ServiceItem>[]).map((result, index) => renderService(result, index))}
             </>
           )}
         </div>
 
-        <div className="px-4 sm:px-6 py-2.5 bg-[#07090D]/80 border-t border-[#1C212B] flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center gap-2 font-mono text-[11px] text-[#94A3B8]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#67df70]"></span>
-            <span>
-              {results.length} {commandMode ? 'matching commands' : 'matching services'}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 font-mono text-[10px] text-[#64748B]">
-            <Hint keys={['↑', '↓']} label="navigate" />
-            <Hint keys={['↵']} label={commandMode ? 'run' : 'launch'} />
-            {!commandMode && <Hint keys={['⇧', '↵']} label="copy url" />}
-            {!commandMode && categories.length > 1 && <Hint keys={['tab']} label="category" />}
-            <Hint keys={['esc']} label="dismiss" />
-          </div>
-        </div>
+        <PaletteFooter count={results.length} commandMode={commandMode} hasCategories={categories.length > 1} />
       </div>
     </dialog>
   );

@@ -181,15 +181,14 @@ describe('CommandPalette keyboard', () => {
     expect(screen.getByText('No matching services for "graf" in HOME & LIVING')).toBeDefined();
   });
 
-  test('Escape, the ESC button, the cancel event and the backdrop close the palette', () => {
+  test('Escape, the ESC button and the cancel event close the palette', () => {
     const { input, onClose } = renderPalette();
     key(input!, 'Escape');
     fireEvent.click(screen.getByText('ESC'));
+    // Browsers fire `cancel` for Escape and, with closedby="any", for clicks outside the panel
     fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
-    fireEvent.click(screen.getByRole('dialog'));
-    // Clicks inside the panel are not backdrop clicks
-    fireEvent.click(screen.getByText('3 matching services'));
-    expect(onClose).toHaveBeenCalledTimes(4);
+    expect(onClose).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole('dialog').getAttribute('closedby')).toBe('any');
   });
 
   test('clicking a result launches it', () => {
