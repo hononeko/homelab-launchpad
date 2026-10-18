@@ -79,7 +79,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-2xl bg-[#0E1117] border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-[92vw] max-w-2xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl rounded-2xl bg-[#0E1117] border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -100,7 +100,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                 </span>
               </div>
               <p className="font-mono text-[11px] text-[#94A3B8]">
-                Scans Kubernetes cluster for Cilium / Envoy Ingress &amp; HTTPRoutes
+                Scans the cluster for Gateway API HTTPRoutes and Ingresses
               </p>
             </div>
           </div>
@@ -263,7 +263,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
         )}
 
         {/* Namespace filters */}
-        <div className="px-5 py-2 bg-[#0A0C10] border-b border-[#1C212B] flex items-center gap-2 overflow-x-auto text-[11px] font-mono">
+        <div className="px-5 py-2 bg-[#0A0C10] border-b border-[#1C212B] flex flex-wrap items-center gap-2 text-[11px] font-mono">
           <span className="text-[#64748B]">Filter NS:</span>
           {namespaces.map((ns) => (
             <button
@@ -281,9 +281,9 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
         </div>
 
         {/* Discovered Routes Table / List */}
-        <div className="flex-1 overflow-y-auto p-4 divide-y divide-[#1C212B]">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-subtle p-4 grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3 content-start">
           {filteredRoutes.length === 0 ? (
-            <div className="py-12 text-center text-[#64748B]">
+            <div className="col-span-full py-12 text-center text-[#64748B]">
               <span className="material-symbols-outlined text-[32px] mb-1">
                 cloud_done
               </span>
@@ -301,7 +301,7 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
               return (
                 <div
                   key={route.id}
-                  className="py-3 flex items-center justify-between gap-3 group"
+                  className="p-3 rounded-xl bg-[#0A0C10] border border-[#1C212B] hover:border-[#283141] flex items-center justify-between gap-3 group transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-lg bg-[#151921] border border-[#283141] flex items-center justify-center text-[#94A3B8] shrink-0">
@@ -311,8 +311,8 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-medium text-[13px] text-white">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-mono font-medium text-[13px] text-white wrap-anywhere">
                           {route.name}
                         </span>
                         <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]">
@@ -324,11 +324,18 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 font-mono text-[11px] text-[#94A3B8] truncate mt-0.5">
-                        <span className="text-[#67df70]">{route.host}</span>
-                        <span className="text-[#64748B]">→</span>
-                        <span className="text-[#94A3B8]">{route.backendService}:{route.port}</span>
-                        <span className="text-[#64748B] hidden sm:inline">({route.gateway})</span>
+                      {/* Host, then backend, on their own lines: long values wrap (at spaces
+                          first) instead of being truncated; the tooltip carries them in full */}
+                      <div
+                        className="font-mono text-[11px] text-[#94A3B8] mt-0.5"
+                        title={`${route.host} → ${route.backendService}:${route.port} (${route.gateway})`}
+                      >
+                        <div className="text-[#67df70] wrap-anywhere">{route.host}</div>
+                        <div className="wrap-anywhere">
+                          <span className="text-[#64748B]">→ </span>
+                          {route.backendService}:{route.port}
+                          <span className="text-[#64748B] hidden sm:inline"> ({route.gateway})</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -361,9 +368,12 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
         <div className="p-3 bg-[#0A0C10] border-t border-[#1C212B] flex items-center justify-between font-mono text-[10px] text-[#64748B]">
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-[#67df70]"></span>
-            <span>Cilium L7 HTTPRoute controller active</span>
+            <span>
+              Showing {filteredRoutes.length} of {discoveredRoutes.length} routes
+              {selectedNamespace === 'all' ? '' : ` in ${selectedNamespace}`}
+            </span>
           </div>
-          <span>Automatic reconciliation every 30s</span>
+          <span>{pendingCount} not yet on the launchpad</span>
         </div>
       </div>
     </div>
