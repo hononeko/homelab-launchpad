@@ -443,7 +443,8 @@ describe('App service editing', () => {
 
     fireEvent.click(screen.getByLabelText('Edit Mealie'));
     fireEvent.change(screen.getByLabelText(/DISPLAY NAME/), { target: { value: 'Recipes' } });
-    fireEvent.keyDown(screen.getByLabelText(/DISPLAY NAME/), { key: 'Escape' });
+    // What the browser fires on the modal dialog when Escape is pressed
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByText('Mealie')).toBeDefined();

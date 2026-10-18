@@ -50,13 +50,20 @@ describe('EditServiceModal', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  test('Escape, Cancel and the backdrop close without saving', () => {
+  test('opens as a modal with the name field focused', () => {
+    renderModal();
+    expect((screen.getByRole('dialog') as HTMLDialogElement).open).toBe(true);
+    expect(document.activeElement).toBe(nameInput());
+  });
+
+  test('Escape, Close and Cancel close without saving', () => {
     const { onSave, onClose } = renderModal();
-    fireEvent.keyDown(nameInput(), { key: 'Escape' });
+    // Browsers fire `cancel` on the dialog when Escape is pressed
+    const cancel = new Event('cancel', { cancelable: true });
+    fireEvent(screen.getByRole('dialog'), cancel);
+    expect(cancel.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('Cancel'));
-    fireEvent.click(screen.getByRole('dialog').parentElement!);
-    // Clicks inside the dialog do not reach the backdrop
-    fireEvent.click(preview());
     expect(onClose).toHaveBeenCalledTimes(3);
     expect(onSave).not.toHaveBeenCalled();
   });

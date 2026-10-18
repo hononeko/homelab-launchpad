@@ -1,4 +1,4 @@
-import React, { useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ServiceIdentity, ServiceItem } from '../types';
 import { ALL_ICONS, ICON_GROUPS, ICON_NAME_PATTERN, IconGroupLabel } from '../data/iconCatalog';
 
@@ -13,6 +13,8 @@ const MAX_NAME_LENGTH = 100;
 /** Rename a service card and pick its icon, with a live preview and a way back to the defaults. */
 export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onSave, onClose }) => {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(service.name);
   const [icon, setIcon] = useState(service.icon);
   const [query, setQuery] = useState('');
@@ -36,8 +38,17 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
     onSave(service.id, { name: trimmedName, icon });
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
+  // Opened as a modal so the browser handles the backdrop, focus trapping and Escape
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    nameRef.current?.focus();
+  }, []);
+
+  const handleCancel = (e: React.SyntheticEvent) => {
+    // Escape: let React unmount the dialog instead of the browser closing it
+    e.preventDefault();
+    onClose();
   };
 
   const handleReset = () => {
@@ -46,21 +57,13 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#07090D]/85 backdrop-blur-md"
-      onClick={(e) => {
-        // Only a click on the backdrop itself closes the dialog
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <dialog
+      ref={dialogRef}
+      aria-labelledby={titleId}
+      onCancel={handleCancel}
+      className="m-auto w-[calc(100%-2rem)] max-w-lg max-h-[90vh] p-0 open:flex flex-col rounded-2xl bg-[#0E1117] border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.85)] overflow-hidden backdrop:bg-[#07090D]/85 backdrop:backdrop-blur-md"
     >
-      <form
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onSubmit={handleSubmit}
-        onKeyDown={handleKeyDown}
-        className="w-full max-w-lg rounded-2xl bg-[#0E1117] border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col max-h-[90vh]"
-      >
+      <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
         <div className="flex items-center justify-between px-5 py-4 bg-[#0A0C10] border-b border-[#1C212B]">
           <h2 id={titleId} className="text-base font-semibold text-white tracking-tight">
             Edit service
@@ -75,7 +78,7 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto scrollbar-subtle space-y-5">
+        <div className="p-5 min-h-0 overflow-y-auto scrollbar-subtle space-y-5">
           {/* Live preview */}
           <div
             data-testid="service-preview"
@@ -93,7 +96,7 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
           <label className="block space-y-1.5">
             <span className="font-mono text-[11px] text-[#94A3B8]">DISPLAY NAME</span>
             <input
-              autoFocus
+              ref={nameRef}
               value={name}
               maxLength={MAX_NAME_LENGTH}
               onChange={(e) => setName(e.target.value)}
@@ -116,7 +119,8 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
               aria-label="Search icons"
               className="w-full px-3 py-2 rounded-lg bg-[#0A0C10] border border-[#283141] focus:border-[#67df70]/60 outline-none text-sm text-white placeholder:text-[#64748B]"
             />
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Icon categories">
+            <fieldset className="flex flex-wrap gap-1.5">
+              <legend className="sr-only">Icon categories</legend>
               {(['All', ...ICON_GROUPS.map((g) => g.label)] as const).map((label) => (
                 <button
                   key={label}
@@ -132,7 +136,7 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
                   {label}
                 </button>
               ))}
-            </div>
+            </fieldset>
             {icons.length === 0 ? (
               <p className="py-4 text-center font-mono text-[11px] text-[#64748B]">No icons match</p>
             ) : (
@@ -186,6 +190,6 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
           </div>
         </div>
       </form>
-    </div>
+    </dialog>
   );
 };
