@@ -17,6 +17,13 @@ export interface ServiceItem {
   custom?: boolean;
   // Kept in the catalog but left off the dashboard; unhidden from the Config view
   hidden?: boolean;
+  // The name and icon from before the user edited them, kept so the edit can be reset
+  original?: ServiceIdentity;
+}
+
+export interface ServiceIdentity {
+  name: string;
+  icon: string;
 }
 
 export interface ArgoApplication {

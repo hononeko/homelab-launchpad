@@ -408,6 +408,50 @@ describe('App hiding', () => {
   });
 });
 
+describe('App service editing', () => {
+  test('renames a card and changes its icon, then resets it', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Mealie');
+
+    fireEvent.click(screen.getByLabelText('Edit Mealie'));
+    fireEvent.change(screen.getByLabelText(/DISPLAY NAME/), { target: { value: 'Recipes' } });
+    fireEvent.click(screen.getByLabelText('kitchen'));
+    fireEvent.click(screen.getByText('Save'));
+
+    expect(await screen.findByText('Saved Recipes')).toBeDefined();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const saved = JSON.parse(localStorage.getItem('launchpad_services')!);
+    expect(saved.find((s: ServiceItem) => s.id === 'imported-mealie')).toMatchObject({
+      name: 'Recipes',
+      icon: 'kitchen',
+      original: { name: 'Mealie', icon: 'tv' },
+    });
+
+    fireEvent.click(screen.getByLabelText('Edit Recipes'));
+    fireEvent.click(screen.getByText('Reset to defaults'));
+    fireEvent.click(screen.getByText('Save'));
+    expect(await screen.findByText('Mealie')).toBeDefined();
+    const reset = JSON.parse(localStorage.getItem('launchpad_services')!);
+    expect(reset.find((s: ServiceItem) => s.id === 'imported-mealie').original).toBeUndefined();
+  });
+
+  test('Escape closes the editor without saving', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Mealie');
+
+    fireEvent.click(screen.getByLabelText('Edit Mealie'));
+    fireEvent.change(screen.getByLabelText(/DISPLAY NAME/), { target: { value: 'Recipes' } });
+    // What the browser fires on the modal dialog when Escape is pressed
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Mealie')).toBeDefined();
+    expect(screen.queryByText('Recipes')).toBeNull();
+  });
+});
+
 describe('App preference sync', () => {
   const puts = () => requests.filter((r) => r.url === '/api/user/preferences' && r.init?.method === 'PUT');
   const settle = () => new Promise((resolve) => setTimeout(resolve, 800));
@@ -495,6 +539,23 @@ describe('App preference sync', () => {
     const body = JSON.parse(String(puts()[1].init!.body));
     expect(body.services[0]).toMatchObject({ id: 'imported-jellyfin', isPinned: false });
     expect('launchesPerWeek' in body.services[0]).toBe(false);
+  });
+
+  test('edited names and icons are synced with what they replaced', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    fireEvent.click(await screen.findByLabelText('Edit Mealie'));
+    fireEvent.change(screen.getByLabelText(/DISPLAY NAME/), { target: { value: 'Recipes' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(puts()).toHaveLength(2), { timeout: 2000 });
+
+    const body = JSON.parse(String(puts()[1].init!.body));
+    expect(body.services.find((s: ServiceItem) => s.id === 'imported-mealie')).toMatchObject({
+      name: 'Recipes',
+      original: { name: 'Mealie', icon: 'tv' },
+    });
   });
 
   test('when the server is unreachable, local changes are never pushed over the profile', async () => {

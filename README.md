@@ -147,7 +147,7 @@ For local development, start the backend with an identity, e.g.
 
 ### User Preferences (Valkey)
 
-Each signed-in user's launchpad follows them across devices. The synced state is the service catalog (its order is the display order, plus pins and hidden services), hidden categories, hidden discovery routes, the default tab, and the ArgoCD and auto-import toggles. It is stored per Authelia user (`Remote-User`); with `AUTH_MODE=none`, everyone shares the `anonymous` profile. Launch counters are incremented atomically on the server. `localStorage` remains the offline cache: if the server can't be reached, changes stay local and are never pushed over the server profile.
+Each signed-in user's launchpad follows them across devices. The synced state is the service catalog (its order is the display order, plus pins, hidden services, and any names and icons the user changed), hidden categories, hidden discovery routes, the default tab, and the ArgoCD and auto-import toggles. It is stored per Authelia user (`Remote-User`); with `AUTH_MODE=none`, everyone shares the `anonymous` profile. Launch counters are incremented atomically on the server. `localStorage` remains the offline cache: if the server can't be reached, changes stay local and are never pushed over the server profile.
 
 | Endpoint | Description |
 |---|---|

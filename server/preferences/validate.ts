@@ -48,6 +48,10 @@ function matches(value: unknown, min: number, max: number, pattern: RegExp): boo
   return str !== null && pattern.test(str);
 }
 
+function isIdentity(value: unknown): boolean {
+  return isRecord(value) && text(value.name, 1, 100) !== null && matches(value.icon, 1, 64, ICON_PATTERN);
+}
+
 function positiveInt(value: unknown): number {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
 }
@@ -68,6 +72,7 @@ function invalidServiceField(raw: Record<string, unknown>): string | null {
     ['discoveredFrom', raw.discoveredFrom === undefined || DISCOVERY_SOURCES.has(raw.discoveredFrom)],
     ['custom', raw.custom === undefined || typeof raw.custom === 'boolean'],
     ['hidden', raw.hidden === undefined || typeof raw.hidden === 'boolean'],
+    ['original', raw.original === undefined || isIdentity(raw.original)],
   ];
   return checks.find(([, valid]) => !valid)?.[0] ?? null;
 }
@@ -100,6 +105,10 @@ function parseService(raw: unknown, index: number): ParseResult<ServiceItem> {
   if (raw.discoveredFrom !== undefined) service.discoveredFrom = raw.discoveredFrom as ServiceItem['discoveredFrom'];
   if (raw.custom !== undefined) service.custom = raw.custom as boolean;
   if (raw.hidden === true) service.hidden = true;
+  if (raw.original !== undefined) {
+    const original = raw.original as Record<string, unknown>;
+    service.original = { name: original.name as string, icon: original.icon as string };
+  }
   return { ok: true, value: service };
 }
 

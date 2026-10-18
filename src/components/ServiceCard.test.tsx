@@ -90,4 +90,17 @@ describe('ServiceCard', () => {
     renderCard();
     expect(screen.queryByTitle('Hide from dashboard')).toBeNull();
   });
+
+  test('offers editing without launching the service', () => {
+    const onEdit = mock();
+    const { onLaunch } = renderCard({ onEdit });
+    fireEvent.click(screen.getByLabelText('Edit Jellyfin'));
+    expect(onEdit).toHaveBeenCalledWith('imported-jellyfin');
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  test('has no edit button without a handler', () => {
+    renderCard();
+    expect(screen.queryByTitle('Edit name and icon')).toBeNull();
+  });
 });

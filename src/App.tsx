@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ServiceItem,
+  ServiceIdentity,
   ArgoApplication,
   DiscoveredHTTPRoute,
   ExcludedRoute,
@@ -33,6 +34,7 @@ import { ConfigView } from './components/ConfigView';
 import { Footer } from './components/Footer';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { HiddenServicesPanel } from './components/HiddenServicesPanel';
+import { EditServiceModal } from './components/EditServiceModal';
 import { usePreferencesSync } from './hooks/usePreferencesSync';
 
 // Stored and synced values are untrusted: each reader rebuilds the value from
@@ -122,6 +124,7 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAutoDiscoveryOpen, setIsAutoDiscoveryOpen] = useState(false);
   const [isClusterModalOpen, setIsClusterModalOpen] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [isScanningRoutes, setIsScanningRoutes] = useState(false);
   const [isSyncingAllArgo, setIsSyncingAllArgo] = useState(false);
   const [isRefreshingArgo, setIsRefreshingArgo] = useState(false);
@@ -333,6 +336,7 @@ export default function App() {
   }, [authorizedServices, hiddenCategories]);
 
   const hiddenServices = useMemo(() => authorizedServices.filter((s) => s.hidden), [authorizedServices]);
+  const editingService = editingServiceId ? visibleServices.find((s) => s.id === editingServiceId) : undefined;
 
   // Register service URLs with the backend health prober. Re-registered
   // periodically because the server expires targets no client still reports.
@@ -489,6 +493,20 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
     // `undefined` rather than `false` keeps unhidden services identical to never-hidden ones once serialized
     setServices((prev) => prev.map((s) => (s.id === id ? { ...s, hidden: hidden || undefined } : s)));
     if (service) showToast(hidden ? `Hid ${service.name} from the dashboard` : `${service.name} is back on the dashboard`);
+  };
+
+  const handleSaveServiceIdentity = (id: string, identity: ServiceIdentity) => {
+    setServices((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s;
+        // The first edit remembers what the service was called; matching it again clears the override
+        const original = s.original ?? { name: s.name, icon: s.icon };
+        const isOriginal = identity.name === original.name && identity.icon === original.icon;
+        return { ...s, ...identity, original: isOriginal ? undefined : original };
+      })
+    );
+    setEditingServiceId(null);
+    showToast(`Saved ${identity.name}`);
   };
 
   const handleToggleRouteHidden = (routeId: string) => {
@@ -959,6 +977,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                         onTogglePin={handleTogglePin}
                         onLaunch={handleLaunchService}
                         onHide={(id) => handleSetServiceHidden(id, true)}
+                        onEdit={setEditingServiceId}
                       />
                     );
                   })}
@@ -1166,6 +1185,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                               onTogglePin={handleTogglePin}
                               onLaunch={handleLaunchService}
                               onHide={(id) => handleSetServiceHidden(id, true)}
+                              onEdit={setEditingServiceId}
                             />
                           ))}
                         </div>
@@ -1260,6 +1280,15 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         excludedRoutes={excludedRoutes}
         k8sStatus={k8sStatus}
       />
+
+      {editingService && (
+        <EditServiceModal
+          key={editingService.id}
+          service={editingService}
+          onSave={handleSaveServiceIdentity}
+          onClose={() => setEditingServiceId(null)}
+        />
+      )}
 
       {/* Cluster Telemetry & Node Modal */}
       <ClusterModal
