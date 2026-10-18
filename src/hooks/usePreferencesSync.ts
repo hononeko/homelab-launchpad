@@ -40,6 +40,7 @@ function toPayload(settings: SyncedSettings, withSeeds = false) {
       ...(s.discoveredFrom ? { discoveredFrom: s.discoveredFrom } : {}),
       ...(s.custom === undefined ? {} : { custom: s.custom }),
       ...(s.hidden ? { hidden: true } : {}),
+      ...(s.original ? { original: { name: s.original.name, icon: s.original.icon } } : {}),
       ...(withSeeds ? { launchesPerWeek: s.launchesPerWeek, lastAccessedTimestamp: s.lastAccessedTimestamp } : {}),
     })),
     hiddenCategories: settings.hiddenCategories,

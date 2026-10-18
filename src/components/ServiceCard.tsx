@@ -9,6 +9,7 @@ interface ServiceCardProps {
   onTogglePin: (id: string, e: React.MouseEvent) => void;
   onLaunch: (service: ServiceItem) => void;
   onHide?: (id: string) => void;
+  onEdit?: (id: string) => void;
 }
 
 interface StatusPresentation {
@@ -65,6 +66,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
   onTogglePin,
   onLaunch,
   onHide,
+  onEdit,
 }) => {
   const handleClick = (e: React.MouseEvent) => {
     // If clicking star or internal button, don't trigger general launch
@@ -109,6 +111,18 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
         </div>
 
         <div className="flex items-center shrink-0">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(service.id)}
+              className="p-1 text-[#64748B] hover:text-[#CBD5E1] rounded-md transition-all sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+              title="Edit name and icon"
+              aria-label={`Edit ${service.name}`}
+            >
+              <span className="material-symbols-outlined text-[17px]">edit</span>
+            </button>
+          )}
+
           {onHide && (
             <button
               type="button"

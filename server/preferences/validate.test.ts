@@ -66,6 +66,8 @@ describe('parsePreferences', () => {
     ['an unknown default tab', { services: [], defaultTab: 'recent' }, '"defaultTab"'],
     ['non-boolean toggles', { services: [], argoEnabled: 'no' }, 'must be booleans'],
     ['a non-boolean hidden flag', { services: [{ ...validService, hidden: 'yes' }] }, 'services[0].hidden'],
+    ['an original identity without a name', { services: [{ ...validService, original: { icon: 'tv' } }] }, 'services[0].original'],
+    ['an original identity with an invalid icon', { services: [{ ...validService, original: { name: 'Jellyfin', icon: '<svg>' } }] }, 'services[0].original'],
     ['hidden route ids that are not a list', { services: [], hiddenRouteIds: 'route-a' }, '"hiddenRouteIds"'],
     ['an invalid hidden route id', { services: [], hiddenRouteIds: ['bad id!'] }, '"hiddenRouteIds"'],
     [
@@ -90,6 +92,16 @@ describe('parsePreferences', () => {
     // Only `true` is stored, so visible services look the same whether or not they were ever hidden
     expect('hidden' in result.value.services[1]).toBe(false);
     expect(result.value.hiddenRouteIds).toEqual(['route-apps-a', 'route-apps-b']);
+  });
+
+  test('keeps the original identity of an edited service and drops extra fields', () => {
+    const result = parsePreferences({
+      services: [{ ...validService, name: 'Movies', icon: 'movie', original: { name: 'Jellyfin', icon: 'tv', extra: 1 } }],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok === false) return;
+    expect(result.value.services[0]).toMatchObject({ name: 'Movies', icon: 'movie' });
+    expect(result.value.services[0].original).toEqual({ name: 'Jellyfin', icon: 'tv' });
   });
 
   test('ignores invalid launch seeds instead of rejecting the payload', () => {
