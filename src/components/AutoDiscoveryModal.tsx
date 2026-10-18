@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { DiscoveredHTTPRoute, ExcludedRoute, ExclusionReason, RouteAlternate } from '../types';
+import { DiscoveredHTTPRoute, ExcludedRoute, ExclusionReason, RouteAlternate, RouteOverride } from '../types';
+import { RouteOverrideModal } from './RouteOverrideModal';
 
 interface AutoDiscoveryModalProps {
   isOpen: boolean;
@@ -16,6 +17,8 @@ interface AutoDiscoveryModalProps {
   onToggleRouteHidden?: (routeId: string) => void;
   // Routes the server left out (annotation, env filters, no backends)
   excludedRoutes?: ExcludedRoute[];
+  // Saves (or, with null, removes) the shared name, category and icon for a host
+  onSaveRouteOverride?: (host: string, override: RouteOverride | null) => Promise<boolean>;
   k8sStatus?: {
     connected: boolean;
     server: string | null;
@@ -35,6 +38,123 @@ function describeAlternates(alternates: RouteAlternate[]): string {
   return `Also served by: ${list.join('; ')}`;
 }
 
+interface RouteCardProps {
+  route: DiscoveredHTTPRoute;
+  isHidden: boolean;
+  onImport: (route: DiscoveredHTTPRoute) => void;
+  onToggleHidden?: (routeId: string) => void;
+  onAdjust?: (routeId: string) => void;
+}
+
+const RouteCard: React.FC<RouteCardProps> = ({ route, isHidden, onImport, onToggleHidden, onAdjust }) => {
+  const isImported = route.status === 'imported';
+  return (
+    <div
+      className={`p-3 rounded-xl bg-[#0A0C10] border border-[#1C212B] hover:border-[#283141] flex flex-wrap items-center justify-between gap-3 group transition-colors ${
+        isHidden ? 'opacity-60' : ''
+      }`}
+    >
+      {/* Details keep at least 14rem; on narrow cards the actions wrap below them */}
+      <div className="flex items-center gap-3 min-w-0 flex-[1_1_14rem]">
+        <div className="w-8 h-8 rounded-lg bg-[#151921] border border-[#283141] flex items-center justify-center text-[#94A3B8] shrink-0">
+          <span className="material-symbols-outlined text-[17px]">
+            {route.suggestedIcon || 'alt_route'}
+          </span>
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-mono font-medium text-[13px] text-white wrap-anywhere">
+              {route.name}
+            </span>
+            <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]">
+              ns: {route.namespace}
+            </span>
+            {route.tlsEnabled && (
+              <span className="material-symbols-outlined text-[12px] text-[#67df70]" title="TLS 1.3 Terminated">
+                lock
+              </span>
+            )}
+            {route.override && (
+              <span
+                className="font-mono text-[9px] px-1.5 rounded bg-[#67df70]/10 text-[#67df70] border border-[#67df70]/30"
+                title="Name, category or icon set by an administrator"
+              >
+                adjusted
+              </span>
+            )}
+            {route.alternates && route.alternates.length > 0 && (
+              <span
+                className="flex items-center gap-0.5 font-mono text-[9px] px-1.5 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]"
+                title={describeAlternates(route.alternates)}
+              >
+                <span className="material-symbols-outlined text-[11px]">alt_route</span>
+                <span>+{route.alternates.length}</span>
+              </span>
+            )}
+          </div>
+          {/* Host, then backend, on their own lines: long values wrap (at spaces
+              first) instead of being truncated; the tooltip carries them in full */}
+          <div
+            className="font-mono text-[11px] text-[#94A3B8] mt-0.5"
+            title={`${route.host} → ${route.backendService}:${route.port} (${route.gateway})`}
+          >
+            <div className="text-[#67df70] wrap-anywhere">{route.host}</div>
+            <div className="wrap-anywhere">
+              <span className="text-[#64748B]">→ </span>
+              {route.backendService}:{route.port}
+              <span className="text-[#64748B] hidden sm:inline"> ({route.gateway})</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0 ml-auto">
+        {onAdjust && (
+          <button
+            type="button"
+            onClick={() => onAdjust(route.id)}
+            className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] transition-colors"
+            title="Set the name, category and icon used on import"
+            aria-label={`Adjust ${route.host}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">tune</span>
+          </button>
+        )}
+        {onToggleHidden && (
+          <button
+            type="button"
+            onClick={() => onToggleHidden(route.id)}
+            className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] transition-colors"
+            title={isHidden ? 'Unhide route' : 'Hide route from this list'}
+            aria-label={`${isHidden ? 'Unhide' : 'Hide'} ${route.host}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">
+              {isHidden ? 'visibility' : 'visibility_off'}
+            </span>
+          </button>
+        )}
+        {isImported ? (
+          <span className="flex items-center gap-1 font-mono text-[11px] text-[#67df70] bg-[#67df70]/10 px-2 py-1 rounded border border-[#67df70]/30">
+            <span className="material-symbols-outlined text-[14px]">check</span>
+            <span>Imported</span>
+          </span>
+        ) : (
+          <button
+            onClick={() => onImport(route)}
+            className="flex items-center gap-1 font-mono text-[11px] font-semibold text-[#0A0C10] bg-[#67df70] hover:bg-[#52c95b] px-2.5 py-1 rounded shadow-sm transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[13px]">
+              add
+            </span>
+            <span>Add to Launchpad</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   isOpen,
   onClose,
@@ -49,8 +169,10 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   hiddenRouteIds = [],
   onToggleRouteHidden,
   excludedRoutes = [],
+  onSaveRouteOverride,
   k8sStatus,
 }) => {
+  const [overrideRouteId, setOverrideRouteId] = useState<string | null>(null);
   const [selectedNamespace, setSelectedNamespace] = useState<string>('all');
   const [showHidden, setShowHidden] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -60,6 +182,9 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
   const [newCategory, setNewCategory] = useState<'MEDIA' | 'HOME & LIVING' | 'TOOLS & DEV' | 'CLUSTER & OPS'>('TOOLS & DEV');
 
   if (!isOpen) return null;
+
+  // No route has a null id, so nothing matches while no route is being adjusted
+  const overrideRoute = discoveredRoutes.find((r) => r.id === overrideRouteId);
 
   const hidden = new Set(hiddenRouteIds);
   const hiddenCount = discoveredRoutes.filter((r) => hidden.has(r.id)).length;
@@ -337,98 +462,16 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
               </p>
             </div>
           ) : (
-            filteredRoutes.map((route) => {
-              const isImported = route.status === 'imported';
-              const isHidden = hidden.has(route.id);
-
-              return (
-                <div
-                  key={route.id}
-                  className={`p-3 rounded-xl bg-[#0A0C10] border border-[#1C212B] hover:border-[#283141] flex flex-wrap items-center justify-between gap-3 group transition-colors ${
-                    isHidden ? 'opacity-60' : ''
-                  }`}
-                >
-                  {/* Details keep at least 14rem; on narrow cards the actions wrap below them */}
-                  <div className="flex items-center gap-3 min-w-0 flex-[1_1_14rem]">
-                    <div className="w-8 h-8 rounded-lg bg-[#151921] border border-[#283141] flex items-center justify-center text-[#94A3B8] shrink-0">
-                      <span className="material-symbols-outlined text-[17px]">
-                        {route.suggestedIcon || 'alt_route'}
-                      </span>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-mono font-medium text-[13px] text-white wrap-anywhere">
-                          {route.name}
-                        </span>
-                        <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]">
-                          ns: {route.namespace}
-                        </span>
-                        {route.tlsEnabled && (
-                          <span className="material-symbols-outlined text-[12px] text-[#67df70]" title="TLS 1.3 Terminated">
-                            lock
-                          </span>
-                        )}
-                        {route.alternates && route.alternates.length > 0 && (
-                          <span
-                            className="flex items-center gap-0.5 font-mono text-[9px] px-1.5 rounded bg-[#191C22] text-[#94A3B8] border border-[#283141]"
-                            title={describeAlternates(route.alternates)}
-                          >
-                            <span className="material-symbols-outlined text-[11px]">alt_route</span>
-                            <span>+{route.alternates.length}</span>
-                          </span>
-                        )}
-                      </div>
-                      {/* Host, then backend, on their own lines: long values wrap (at spaces
-                          first) instead of being truncated; the tooltip carries them in full */}
-                      <div
-                        className="font-mono text-[11px] text-[#94A3B8] mt-0.5"
-                        title={`${route.host} → ${route.backendService}:${route.port} (${route.gateway})`}
-                      >
-                        <div className="text-[#67df70] wrap-anywhere">{route.host}</div>
-                        <div className="wrap-anywhere">
-                          <span className="text-[#64748B]">→ </span>
-                          {route.backendService}:{route.port}
-                          <span className="text-[#64748B] hidden sm:inline"> ({route.gateway})</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0 ml-auto">
-                    {onToggleRouteHidden && (
-                      <button
-                        type="button"
-                        onClick={() => onToggleRouteHidden(route.id)}
-                        className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] transition-colors"
-                        title={isHidden ? 'Unhide route' : 'Hide route from this list'}
-                        aria-label={`${isHidden ? 'Unhide' : 'Hide'} ${route.host}`}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          {isHidden ? 'visibility' : 'visibility_off'}
-                        </span>
-                      </button>
-                    )}
-                    {isImported ? (
-                      <span className="flex items-center gap-1 font-mono text-[11px] text-[#67df70] bg-[#67df70]/10 px-2 py-1 rounded border border-[#67df70]/30">
-                        <span className="material-symbols-outlined text-[14px]">check</span>
-                        <span>Imported</span>
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => onImportRoute(route)}
-                        className="flex items-center gap-1 font-mono text-[11px] font-semibold text-[#0A0C10] bg-[#67df70] hover:bg-[#52c95b] px-2.5 py-1 rounded shadow-sm transition-colors cursor-pointer"
-                      >
-                        <span className="material-symbols-outlined text-[13px]">
-                          add
-                        </span>
-                        <span>Add to Launchpad</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
+            filteredRoutes.map((route) => (
+              <RouteCard
+                key={route.id}
+                route={route}
+                isHidden={hidden.has(route.id)}
+                onImport={onImportRoute}
+                onToggleHidden={onToggleRouteHidden}
+                onAdjust={onSaveRouteOverride ? setOverrideRouteId : undefined}
+              />
+            ))
           )}
 
           {excludedRoutes.length > 0 && (
@@ -461,6 +504,16 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
           </div>
           <span>{pendingCount} not yet on the launchpad</span>
         </div>
+
+        {/* Inside the panel, so clicks in the dialog never reach the backdrop's close handler */}
+        {overrideRoute && onSaveRouteOverride && (
+          <RouteOverrideModal
+            key={overrideRoute.id}
+            route={overrideRoute}
+            onSave={onSaveRouteOverride}
+            onClose={() => setOverrideRouteId(null)}
+          />
+        )}
       </div>
     </div>
   );

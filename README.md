@@ -176,6 +176,19 @@ Routes can be left out of discovery on the server, for every user:
 
 The discovery dialog lists excluded routes with the reason. Each user can also hide routes from their own discovery list, and hide services from their dashboard; hidden services are listed at the bottom of the Services view to unhide.
 
+#### Category and icon rules
+
+Each discovered route gets a suggested category and icon. Keyword rules are tried in order against the route's name, namespace, host and backend; the first match wins. Otherwise the route's namespace decides, and anything else falls back to Tools & Dev with a generic icon. The built-in rules live in [`server/config/category-mappings.json`](server/config/category-mappings.json).
+
+Administrators can change the rules under **Settings → Category & icon rules**, and set the name, category and icon of a single host from the adjust button in the discovery dialog. Changes apply to every administrator and re-classify the discovered routes straight away. Services already on someone's launchpad keep their name and icon. The rules are stored in Valkey (in memory without `VALKEY_URL`); **Reset to defaults** goes back to the bundled file.
+
+| Endpoint (administrators only) | Description |
+|---|---|
+| `GET /api/config/mappings` | Active rules, the bundled defaults, and whether they were customized |
+| `PUT /api/config/mappings` | Replace the rules (`appRules`, `namespaceRules`, `overrides`) |
+| `POST /api/config/mappings/reset` | Go back to the bundled defaults |
+| `PUT` / `DELETE /api/config/mappings/overrides/:host` | Set or remove one host's `name`, `category` and `icon` |
+
 ### Service Health Probes
 
 The backend probes every service URL registered by the dashboard (HEAD, falling back

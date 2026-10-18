@@ -1,6 +1,6 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { ServiceIdentity, ServiceItem } from '../types';
-import { ALL_ICONS, ICON_GROUPS, ICON_NAME_PATTERN, IconGroupLabel } from '../data/iconCatalog';
+import { IconPicker } from './IconPicker';
 
 interface EditServiceModalProps {
   service: ServiceItem;
@@ -17,20 +17,10 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(service.name);
   const [icon, setIcon] = useState(service.icon);
-  const [query, setQuery] = useState('');
-  const [group, setGroup] = useState<IconGroupLabel | 'All'>('All');
 
   const defaults = service.original ?? { name: service.name, icon: service.icon };
   const trimmedName = name.trim();
   const isAtDefaults = trimmedName === defaults.name && icon === defaults.icon;
-
-  const icons = useMemo(() => {
-    const typed = query.trim().toLowerCase().replaceAll(' ', '_');
-    const pool = group === 'All' ? ALL_ICONS : (ICON_GROUPS.find((g) => g.label === group)?.icons ?? []);
-    const matches = pool.filter((candidate) => candidate.includes(typed));
-    // Any Material Symbol works, so a typed name outside the catalog is offered as-is
-    return ICON_NAME_PATTERN.test(typed) && !ALL_ICONS.includes(typed) ? [typed, ...matches] : matches;
-  }, [query, group]);
 
   const handleSubmit = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -111,55 +101,7 @@ export const EditServiceModal: React.FC<EditServiceModalProps> = ({ service, onS
 
           <div className="space-y-2">
             <span className="block font-mono text-[11px] text-[#94A3B8]">ICON</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search icons, or type any Material Symbol name"
-              aria-label="Search icons"
-              className="w-full px-3 py-2 rounded-lg bg-[#0A0C10] border border-[#283141] focus:border-[#67df70]/60 outline-none text-sm text-white placeholder:text-[#64748B]"
-            />
-            <fieldset className="flex flex-wrap gap-1.5">
-              <legend className="sr-only">Icon categories</legend>
-              {(['All', ...ICON_GROUPS.map((g) => g.label)] as const).map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  aria-pressed={group === label}
-                  onClick={() => setGroup(label)}
-                  className={`px-2.5 py-1 rounded-md font-mono text-[11px] border transition-colors ${
-                    group === label
-                      ? 'bg-[#67df70]/10 border-[#67df70]/40 text-[#67df70]'
-                      : 'bg-[#151921] border-[#283141] text-[#94A3B8] hover:text-white'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </fieldset>
-            {icons.length === 0 ? (
-              <p className="py-4 text-center font-mono text-[11px] text-[#64748B]">No icons match</p>
-            ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(2.75rem,1fr))] gap-1.5 max-h-48 overflow-y-auto scrollbar-subtle pr-1">
-                {icons.map((candidate) => (
-                  <button
-                    key={candidate}
-                    type="button"
-                    title={candidate}
-                    aria-label={candidate}
-                    aria-pressed={icon === candidate}
-                    onClick={() => setIcon(candidate)}
-                    className={`h-11 rounded-lg border flex items-center justify-center transition-colors ${
-                      icon === candidate
-                        ? 'bg-[#67df70]/10 border-[#67df70]/60 text-[#67df70]'
-                        : 'bg-[#151921] border-[#1C212B] text-[#94A3B8] hover:text-white hover:border-[#283141]'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-[20px]">{candidate}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <IconPicker value={icon} onChange={setIcon} />
           </div>
         </div>
 

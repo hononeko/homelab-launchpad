@@ -20,6 +20,10 @@ export interface PreferencesStore {
   /** Atomically increments a launch counter; null when the per-user cap is reached. */
   recordLaunch(user: string, serviceId: string, at: number): Promise<LaunchStats | null>;
   launchStats(user: string): Promise<Record<string, LaunchStats>>;
+  /** A server-wide setting (e.g. category mappings), or null when unset. */
+  loadSetting(name: string): Promise<unknown>;
+  /** Stores a server-wide setting; null removes it. */
+  saveSetting(name: string, value: unknown): Promise<void>;
   close(): void;
 }
 
@@ -34,6 +38,7 @@ export class MemoryPreferencesStore implements PreferencesStore {
   readonly kind = 'memory' as const;
   private readonly prefs = new Map<string, StoredPreferences>();
   private readonly stats = new Map<string, Map<string, LaunchStats>>();
+  private readonly settings = new Map<string, unknown>();
 
   constructor(private readonly maxLaunchCounters = MAX_LAUNCH_COUNTERS) {}
 
@@ -80,6 +85,17 @@ export class MemoryPreferencesStore implements PreferencesStore {
     return Promise.resolve(Object.fromEntries(this.stats.get(user) ?? []));
   }
 
+  loadSetting(name: string): Promise<unknown> {
+    const value = this.settings.get(name);
+    return Promise.resolve(value === undefined ? null : structuredClone(value));
+  }
+
+  saveSetting(name: string, value: unknown): Promise<void> {
+    if (value === null) this.settings.delete(name);
+    else this.settings.set(name, structuredClone(value));
+    return Promise.resolve();
+  }
+
   close(): void {
     // Nothing to release: data lives in this process only
   }
@@ -119,6 +135,10 @@ for i = 4 + idCount, #ARGV, 3 do
 end
 return 1
 `;
+
+function settingKey(name: string): string {
+  return `launchpad:v1:settings:${encodeURIComponent(name)}`;
+}
 
 /** Valkey-backed store. Keys are namespaced per Authelia username. */
 export class ValkeyPreferencesStore implements PreferencesStore {
@@ -212,6 +232,17 @@ export class ValkeyPreferencesStore implements PreferencesStore {
       stats[id] = { count: Number(count), lastLaunchedAt: Number(lastLaunch?.[id] ?? 0) };
     }
     return stats;
+  }
+
+  async loadSetting(name: string): Promise<unknown> {
+    const raw = await this.send('GET', [settingKey(name)]);
+    return typeof raw === 'string' ? JSON.parse(raw) : null;
+  }
+
+  async saveSetting(name: string, value: unknown): Promise<void> {
+    await (value === null
+      ? this.send('DEL', [settingKey(name)])
+      : this.send('SET', [settingKey(name), JSON.stringify(value)]));
   }
 
   close(): void {

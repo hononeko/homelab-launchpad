@@ -1,7 +1,18 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { ComponentProps } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ConfigView } from './ConfigView';
+
+const originalFetch = globalThis.fetch;
+
+// The category rules panel loads from the server; these tests cover the rest of the view
+beforeEach(() => {
+  globalThis.fetch = mock(async () => new Response('{}', { status: 503 })) as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 function renderConfig(props: Partial<ComponentProps<typeof ConfigView>> = {}) {
   const handlers = {

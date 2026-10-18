@@ -33,6 +33,7 @@ import {
 } from '../health/probe';
 import { getPreferencesStore } from '../preferences/store';
 import { preferencesRouter } from './preferences';
+import { createMappingsRouter } from './mappings';
 
 export const apiRouter = Router();
 
@@ -152,21 +153,24 @@ apiRouter.get('/routes', requireAdmin, async (req: Request, res: Response) => {
   }
 });
 
+// Scans the cluster and pushes the result to every administrator
+async function rescanRoutes(importedIds: Set<string>) {
+  const routes = await scanClusterRoutes(importedIds);
+  const update = {
+    routes,
+    excluded: getExcludedRoutes(),
+    lastScannedAt: getLastScannedAt(),
+    count: routes.length,
+  };
+  broadcastAdminSSE('routes:updated', update);
+  return update;
+}
+
 // 3. Trigger Route Scan
 apiRouter.post('/routes/scan', requireAdmin, async (req: Request, res: Response) => {
   try {
     const existingImported = req.body?.importedIds ? new Set<string>(req.body.importedIds) : new Set<string>();
-    const routes = await scanClusterRoutes(existingImported);
-    const update = {
-      routes,
-      excluded: getExcludedRoutes(),
-      lastScannedAt: getLastScannedAt(),
-      count: routes.length,
-    };
-
-    // Broadcast update to all connected SSE clients
-    broadcastAdminSSE('routes:updated', update);
-
+    const update = await rescanRoutes(existingImported);
     res.json({ success: true, ...update });
   } catch (error: any) {
     const safeErr = String((error as Error)?.message || error).replace(/\n|\r/g, '');
@@ -177,6 +181,14 @@ apiRouter.post('/routes/scan', requireAdmin, async (req: Request, res: Response)
     });
   }
 });
+
+// Category and icon rules; a change re-classifies the routes already discovered
+apiRouter.use(
+  createMappingsRouter(async () => {
+    const imported = getCachedRoutes().filter((r) => r.status === 'imported').map((r) => r.id);
+    await rescanRoutes(new Set(imported));
+  })
+);
 
 // 4. Mark Route as Imported
 apiRouter.post('/routes/import', requireAdmin, (req: Request, res: Response) => {

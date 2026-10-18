@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   ServiceItem,
   ServiceIdentity,
+  RouteOverride,
   ArgoApplication,
   DiscoveredHTTPRoute,
   ExcludedRoute,
@@ -161,6 +162,17 @@ export default function App() {
       .catch((err) => console.warn('[App] Session fetch error:', err));
   }, []);
 
+  // Applies a server route list, keeping the routes this browser already imported marked as imported
+  const applyRoutesUpdate = (payload: { routes?: unknown; excluded?: unknown } | null) => {
+    if (!Array.isArray(payload?.routes)) return;
+    const routes = payload.routes as DiscoveredHTTPRoute[];
+    setExcludedRoutes(asExcludedRoutes(payload.excluded) ?? []);
+    setDiscoveredRoutes((prev) => {
+      const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
+      return routes.map((r) => ({ ...r, status: importedSet.has(r.id) ? 'imported' : r.status }));
+    });
+  };
+
   // Fetch initial routes & ArgoCD applications from backend and subscribe to SSE stream
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -185,16 +197,7 @@ export default function App() {
       fetch('/api/routes')
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) {
-            setExcludedRoutes(asExcludedRoutes(data.excluded) ?? []);
-            setDiscoveredRoutes((prev) => {
-              const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
-              return data.routes.map((r: DiscoveredHTTPRoute) => ({
-                ...r,
-                status: importedSet.has(r.id) ? 'imported' : r.status,
-              }));
-            });
-          }
+          if (data?.success && Array.isArray(data.routes) && data.routes.length > 0) applyRoutesUpdate(data);
         })
         .catch((err) => console.warn('[App] Initial routes fetch error:', err));
 
@@ -228,17 +231,7 @@ export default function App() {
       eventSource = new EventSource('/api/routes/stream');
       eventSource.addEventListener('routes:updated', (e: MessageEvent) => {
         try {
-          const payload = JSON.parse(e.data);
-          if (payload?.routes) {
-            setExcludedRoutes(asExcludedRoutes(payload.excluded) ?? []);
-            setDiscoveredRoutes((prev) => {
-              const importedSet = new Set(prev.filter((r) => r.status === 'imported').map((r) => r.id));
-              return payload.routes.map((r: DiscoveredHTTPRoute) => ({
-                ...r,
-                status: importedSet.has(r.id) ? 'imported' : r.status,
-              }));
-            });
-          }
+          applyRoutesUpdate(JSON.parse(e.data));
         } catch (parseErr) {
           console.error('[SSE] Failed to parse routes:updated event:', parseErr);
         }
@@ -507,6 +500,33 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
     );
     setEditingServiceId(null);
     showToast(`Saved ${identity.name}`);
+  };
+
+  // Route overrides are shared by every administrator, so they live on the server
+  const handleSaveRouteOverride = async (host: string, override: RouteOverride | null): Promise<boolean> => {
+    const path = `/api/config/mappings/overrides/${encodeURIComponent(host)}`;
+    try {
+      const res = await fetch(
+        path,
+        override
+          ? { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(override) }
+          : { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const reason = typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`;
+        showToast(`Could not save: ${reason}`);
+        return false;
+      }
+      // The server re-ran discovery before answering, so the route list is current
+      const routes = await fetch('/api/routes');
+      if (routes.ok) applyRoutesUpdate(await routes.json());
+      showToast(override ? `Saved defaults for ${host}` : `Removed the override for ${host}`);
+      return true;
+    } catch {
+      showToast('Could not reach the server');
+      return false;
+    }
   };
 
   const handleToggleRouteHidden = (routeId: string) => {
@@ -1278,6 +1298,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
         hiddenRouteIds={hiddenRouteIds}
         onToggleRouteHidden={handleToggleRouteHidden}
         excludedRoutes={excludedRoutes}
+        onSaveRouteOverride={handleSaveRouteOverride}
         k8sStatus={k8sStatus}
       />
 
