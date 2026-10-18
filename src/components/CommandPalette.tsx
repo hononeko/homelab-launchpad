@@ -1,11 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ServiceItem } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { SERVICE_CATEGORIES, ServiceCategory, ServiceItem } from '../types';
+import { RankedField, RankedItem, rankByFuzzy } from '../lib/fuzzy';
 
-// Best match plus up to seven related services
-const MAX_VISIBLE_RESULTS = 8;
+// Rendered results; the list scrolls to keep the keyboard selection in view
+const MAX_VISIBLE_RESULTS = 30;
+const COMMAND_PREFIX = '>';
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+/** An action the palette can run in command mode (query starting with ">"). */
+export interface PaletteCommand {
+  id: string;
+  title: string;
+  icon: string;
+  keywords?: string[];
+  run: () => void;
 }
 
 interface CommandPaletteProps {
@@ -13,6 +20,108 @@ interface CommandPaletteProps {
   onClose: () => void;
   services: ServiceItem[];
   onLaunchService: (service: ServiceItem) => void;
+  commands?: PaletteCommand[];
+}
+
+// Name matches count most, then the address, category and description
+const SERVICE_FIELDS: RankedField<ServiceItem>[] = [
+  { get: (s) => s.name, weight: 4 },
+  { get: (s) => s.displayUrl, weight: 2 },
+  { get: (s) => s.category, weight: 1.5 },
+  { get: (s) => s.description, weight: 1 },
+];
+
+const COMMAND_FIELDS: RankedField<PaletteCommand>[] = [
+  { get: (c) => c.title, weight: 2 },
+  { get: (c) => (c.keywords ?? []).join(' '), weight: 1 },
+];
+
+type Feedback = { tone: 'ok' | 'error'; text: string } | null;
+
+/** Renders text with the matched character positions emphasized. */
+function Highlighted({ text, indices }: Readonly<{ text: string; indices: number[] }>) {
+  if (indices.length === 0) return <>{text}</>;
+  const marked = new Set(indices);
+  const parts: Array<{ text: string; match: boolean }> = [];
+  for (const [i, char] of Array.from(text).entries()) {
+    const match = marked.has(i);
+    const last = parts.at(-1);
+    if (last?.match === match) last.text += char;
+    else parts.push({ text: char, match });
+  }
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.match ? (
+          <mark
+            key={i}
+            className="bg-transparent text-[#67df70] underline decoration-[#67df70]/40 decoration-2 underline-offset-4 font-semibold"
+          >
+            {part.text}
+          </mark>
+        ) : (
+          <React.Fragment key={i}>{part.text}</React.Fragment>
+        )
+      )}
+    </>
+  );
+}
+
+interface RowProps {
+  selected: boolean;
+  icon: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  trailing?: React.ReactNode;
+}
+
+const ResultRow: React.FC<RowProps> = ({ selected, icon, onClick, children, trailing }) => (
+  <button
+    type="button"
+    // Rows are clicked with the mouse; the keyboard stays in the search field
+    tabIndex={-1}
+    data-selected={selected}
+    onClick={onClick}
+    className={`w-full text-left flex items-center justify-between p-2 rounded-xl transition-colors duration-100 group ${
+      selected ? 'bg-[#1D2026] text-white ring-1 ring-[#67df70]/40' : 'hover:bg-[#151921] text-[#CBD5E1]'
+    }`}
+  >
+    <span className="flex items-center gap-3 min-w-0">
+      <span
+        className={`w-8 h-8 rounded-lg border border-[#283141] flex items-center justify-center shrink-0 ${
+          selected ? 'bg-[#07090D] text-[#67df70]' : 'bg-[#151921] text-[#94A3B8] group-hover:text-[#67df70]'
+        }`}
+      >
+        <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      </span>
+      <span className="min-w-0 flex flex-col">{children}</span>
+    </span>
+    {trailing}
+  </button>
+);
+
+function SectionHeading({ label, detail }: Readonly<{ label: string; detail?: string }>) {
+  return (
+    <div className="px-2 pt-2 pb-1 font-mono text-[10px] text-[#94A3B8] flex items-center justify-between select-none">
+      <span className="tracking-wider">{label}</span>
+      {detail && <span>{detail}</span>}
+    </div>
+  );
+}
+
+const kbdClass = 'px-1.5 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]';
+
+function Hint({ keys, label }: Readonly<{ keys: string[]; label: string }>) {
+  return (
+    <span className="flex items-center gap-1">
+      {keys.map((key) => (
+        <kbd key={key} className={kbdClass}>
+          {key}
+        </kbd>
+      ))}
+      <span>{label}</span>
+    </span>
+  );
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -20,134 +129,205 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onClose,
   services,
   onLaunchService,
+  commands = [],
 }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [category, setCategory] = useState<ServiceCategory | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setQuery('');
-      setSelectedIndex(0);
-      setCopiedUrl(null);
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-    }
+    if (!isOpen) return;
+    setQuery('');
+    setSelectedIndex(0);
+    setCategory(null);
+    setFeedback(null);
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    inputRef.current?.focus();
   }, [isOpen]);
 
-  // Filter services
-  const filtered = services.filter((s) => {
-    const q = query.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      s.name.toLowerCase().includes(q) ||
-      s.description.toLowerCase().includes(q) ||
-      s.displayUrl.toLowerCase().includes(q) ||
-      s.category.toLowerCase().includes(q)
-    );
-  });
+  const commandMode = query.trimStart().startsWith(COMMAND_PREFIX);
+  const search = commandMode ? query.trimStart().slice(COMMAND_PREFIX.length) : query;
 
-  const bestMatch = filtered[0];
-  const relatedServices = filtered.slice(1, MAX_VISIBLE_RESULTS);
-  const totalMatches = filtered.length;
-  // Keyboard selection only cycles through results that are actually rendered
-  const visibleCount = Math.max(1, Math.min(filtered.length, MAX_VISIBLE_RESULTS));
+  // Only categories that have services are offered as filters
+  const categories = useMemo(
+    () => SERVICE_CATEGORIES.filter((c) => services.some((s) => s.category === c)),
+    [services]
+  );
 
-  // Keyboard navigation inside modal
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex((prev) => (prev + 1) % visibleCount);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIndex((prev) => (prev - 1 + visibleCount) % visibleCount);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const target = filtered[selectedIndex] || bestMatch;
-      if (target) {
-        onLaunchService(target);
-        onClose();
-      }
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      const target = filtered[selectedIndex] || bestMatch;
-      if (target) {
-        navigator.clipboard.writeText(target.url);
-        setCopiedUrl(target.name);
-        setTimeout(() => setCopiedUrl(null), 2000);
-      }
-    }
-  };
+  const serviceResults = useMemo(() => {
+    const pool = category ? services.filter((s) => s.category === category) : services;
+    return rankByFuzzy(search, pool, SERVICE_FIELDS);
+  }, [search, services, category]);
 
-  // Helper to highlight matched query in string
-  const renderHighlightedText = (text: string, highlight: string) => {
-    const needle = highlight.trim();
-    if (!needle) return text;
-    // Escape the query: characters like "(" or "+" would otherwise throw or misbehave
-    const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'gi'));
-    return parts.map((part, index) =>
-      part.toLowerCase() === needle.toLowerCase() ? (
-        <span
-          key={index}
-          className="text-[#67df70] underline decoration-[#67df70]/40 decoration-2 underline-offset-4 font-semibold"
-        >
-          {part}
-        </span>
-      ) : (
-        part
-      )
-    );
-  };
+  const commandResults = useMemo(() => rankByFuzzy(search, commands, COMMAND_FIELDS), [search, commands]);
+
+  const results: Array<RankedItem<ServiceItem> | RankedItem<PaletteCommand>> = commandMode
+    ? commandResults
+    : serviceResults;
+  const visible = results.slice(0, MAX_VISIBLE_RESULTS);
+  const selected = Math.min(selectedIndex, Math.max(visible.length - 1, 0));
+
+  // Keep the keyboard selection on screen
+  useEffect(() => {
+    listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [selected, query, category]);
 
   if (!isOpen) return null;
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-16 sm:pt-24 px-4 bg-[#07090D]/80 backdrop-blur-md transition-opacity duration-200"
-      onClick={onClose}
+  const launch = (service: ServiceItem) => {
+    onLaunchService(service);
+    onClose();
+  };
+
+  const run = (command: PaletteCommand) => {
+    onClose();
+    command.run();
+  };
+
+  const copyUrl = async (service: ServiceItem) => {
+    try {
+      await navigator.clipboard.writeText(service.url);
+      setFeedback({ tone: 'ok', text: `Copied ${service.displayUrl}` });
+    } catch {
+      setFeedback({ tone: 'error', text: 'Could not copy the URL' });
+    }
+  };
+
+  const cycleCategory = (step: 1 | -1) => {
+    const options: Array<ServiceCategory | null> = [null, ...categories];
+    const next = (options.indexOf(category) + step + options.length) % options.length;
+    setCategory(options[next]);
+    setSelectedIndex(0);
+  };
+
+  const activate = (shift: boolean) => {
+    const target = visible[selected]?.item;
+    if (!target) return;
+    if (commandMode) run(target as PaletteCommand);
+    else if (shift) void copyUrl(target as ServiceItem);
+    else launch(target as ServiceItem);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const count = Math.max(visible.length, 1);
+    switch (e.key) {
+      case 'Escape':
+        e.preventDefault();
+        onClose();
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        setSelectedIndex((selected + 1) % count);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setSelectedIndex((selected - 1 + count) % count);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        activate(e.shiftKey);
+        break;
+      case 'Tab':
+        // Tab cycles the category filters instead of leaving the search field
+        if (commandMode) break;
+        e.preventDefault();
+        cycleCategory(e.shiftKey ? -1 : 1);
+        break;
+    }
+  };
+
+  const chooseCategory = (next: ServiceCategory | null) => {
+    setCategory(next);
+    setSelectedIndex(0);
+    inputRef.current?.focus();
+  };
+
+  const renderService = ({ item: service, highlight }: RankedItem<ServiceItem>, index: number) => (
+    <ResultRow
+      key={service.id}
+      selected={index === selected}
+      icon={service.icon || 'hub'}
+      onClick={() => launch(service)}
+      trailing={
+        <span className="hidden sm:inline-block shrink-0 ml-2 px-1.5 py-0.5 rounded bg-[#0E1117] font-mono text-[10px] text-[#94A3B8] border border-[#1C212B]">
+          {service.category}
+        </span>
+      }
     >
-      <div
-        className="w-full max-w-[640px] rounded-2xl bg-[#0E1117]/95 backdrop-blur-2xl border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col transition-all duration-200"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
-      >
-        {/* Modal Search Input Header */}
+      <span className="text-[13px] text-white font-medium tracking-tight truncate">
+        <Highlighted text={service.name} indices={highlight} />
+      </span>
+      <span className="text-[11px] text-[#94A3B8] truncate font-mono">
+        {service.description} • {service.displayUrl}
+      </span>
+    </ResultRow>
+  );
+
+  const renderCommand = ({ item: command, highlight }: RankedItem<PaletteCommand>, index: number) => (
+    <ResultRow key={command.id} selected={index === selected} icon={command.icon} onClick={() => run(command)}>
+      <span className="text-[13px] text-white font-medium tracking-tight truncate">
+        <Highlighted text={command.title} indices={highlight} />
+      </span>
+    </ResultRow>
+  );
+
+  const emptyMessage = commandMode
+    ? `No commands match "${search.trim()}"`
+    : `No matching services for "${query.trim()}"${category ? ` in ${category}` : ''}`;
+
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-label="Command palette"
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={(e) => {
+        // A click outside the panel lands on the dialog element itself (its backdrop)
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="mt-16 sm:mt-24 mx-auto w-[calc(100%-2rem)] max-w-[640px] p-0 bg-transparent backdrop:bg-[#07090D]/80 backdrop:backdrop-blur-md"
+    >
+      <div className="rounded-2xl bg-[#0E1117]/95 border border-[#283141] shadow-[0_24px_70px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col">
         <div className="flex items-center px-4 sm:px-6 py-3.5 bg-[#07090D]/60 border-b border-[#1C212B] gap-3">
           <span className="material-symbols-outlined text-[20px] text-[#67df70] select-none shrink-0">
-            terminal
+            {commandMode ? 'chevron_right' : 'terminal'}
           </span>
-
-          <div className="flex-1 flex items-center relative font-mono text-[14px]">
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSelectedIndex(0);
-              }}
-              placeholder="Search services, DNS routes, pods..."
-              className="w-full bg-transparent font-mono text-[14px] text-white placeholder:text-[#64748B] focus:outline-none focus:ring-0"
-              spellCheck={false}
-              autoComplete="off"
-            />
-            {query && (
-              <span className="w-[6px] h-[18px] bg-[#67df70] animate-pulse inline-block ml-1 shrink-0"></span>
-            )}
-          </div>
-
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            aria-label="Search services, or type > for commands"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelectedIndex(0);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Search services, or type > for commands"
+            className="flex-1 min-w-0 bg-transparent font-mono text-[14px] text-white placeholder:text-[#64748B] focus:outline-none focus:ring-0"
+            spellCheck={false}
+            autoComplete="off"
+          />
           <div className="flex items-center gap-1.5 shrink-0">
-            {copiedUrl && (
-              <span className="text-[11px] font-mono text-[#67df70] bg-[#67df70]/10 px-2 py-0.5 rounded border border-[#67df70]/30 animate-fade-in">
-                Copied {copiedUrl}!
-              </span>
+            {feedback && (
+              <output
+                className={`text-[11px] font-mono px-2 py-0.5 rounded border animate-fade-in ${
+                  feedback.tone === 'ok'
+                    ? 'text-[#67df70] bg-[#67df70]/10 border-[#67df70]/30'
+                    : 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+                }`}
+              >
+                {feedback.text}
+              </output>
             )}
             <button
+              type="button"
               onClick={onClose}
               className="font-mono text-[10px] text-[#94A3B8] px-2 py-1 rounded bg-[#191C22] border border-[#283141] hover:text-white select-none transition-colors"
             >
@@ -156,172 +336,66 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           </div>
         </div>
 
-        {/* Results List */}
-        <div className="px-3 sm:px-4 py-2 flex flex-col gap-1 max-h-[440px] overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="py-12 text-center flex flex-col items-center justify-center text-[#64748B]">
-              <span className="material-symbols-outlined text-[32px] mb-2 text-[#475569]">
-                search_off
-              </span>
-              <p className="font-mono text-[13px] text-[#94A3B8]">
-                No matching services for "{query}"
-              </p>
+        {!commandMode && categories.length > 1 && (
+          <fieldset className="flex flex-wrap gap-1.5 px-4 sm:px-6 py-2 border-b border-[#1C212B]">
+            <legend className="sr-only">Filter by category</legend>
+            {[null, ...categories].map((option) => (
+              <button
+                key={option ?? 'all'}
+                type="button"
+                tabIndex={-1}
+                aria-pressed={category === option}
+                onClick={() => chooseCategory(option)}
+                className={`px-2 py-0.5 rounded-md font-mono text-[10px] border transition-colors ${
+                  category === option
+                    ? 'bg-[#67df70]/10 border-[#67df70]/40 text-[#67df70]'
+                    : 'bg-[#151921] border-[#283141] text-[#94A3B8] hover:text-white'
+                }`}
+              >
+                {option ?? 'ALL'}
+              </button>
+            ))}
+          </fieldset>
+        )}
+
+        <div ref={listRef} className="px-3 sm:px-4 py-2 flex flex-col gap-1 max-h-[min(440px,60vh)] overflow-y-auto scrollbar-subtle">
+          {visible.length === 0 ? (
+            <div className="py-12 text-center flex flex-col items-center justify-center">
+              <span className="material-symbols-outlined text-[32px] mb-2 text-[#475569]">search_off</span>
+              <p className="font-mono text-[13px] text-[#94A3B8]">{emptyMessage}</p>
               <p className="font-mono text-[11px] text-[#64748B] mt-1">
-                Try searching by service name, category, or domain
+                {commandMode ? 'Delete the > to search services' : 'Type > to run a command instead'}
               </p>
             </div>
           ) : (
             <>
-              {/* Best Match Section */}
-              {bestMatch && (
-                <div>
-                  <div className="px-2 pt-1 pb-1 font-mono text-[10px] text-[#94A3B8] flex items-center justify-between select-none">
-                    <span className="tracking-wider">// BEST MATCH</span>
-                    <span>INDEX: 001</span>
-                  </div>
-
-                  <div
-                    onClick={() => {
-                      onLaunchService(bestMatch);
-                      onClose();
-                    }}
-                    className={`group flex items-center justify-between p-2.5 sm:p-3 rounded-xl cursor-pointer transition-all duration-150 relative ${
-                      selectedIndex === 0
-                        ? 'bg-[#1D2026] text-white ring-1 ring-[#67df70]/50 shadow-md'
-                        : 'bg-[#151921]/90 hover:bg-[#1D2026] text-[#CBD5E1]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-[#07090D] border border-[#283141] flex items-center justify-center text-[#67df70] shrink-0">
-                        <span className="material-symbols-outlined text-[18px]">
-                          {bestMatch.icon || 'hub'}
-                        </span>
-                      </div>
-                      <div className="min-w-0 flex flex-col">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-[14px] text-white tracking-tight">
-                            {renderHighlightedText(bestMatch.name, query)}
-                          </span>
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#67df70] shrink-0"></span>
-                        </div>
-                        <span className="text-[11px] text-[#94A3B8] truncate font-mono">
-                          {bestMatch.description} • {bestMatch.displayUrl}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0 pl-2">
-                      <span className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-[#0E1117] font-mono text-[10px] text-[#94A3B8] border border-[#283141]">
-                        // {bestMatch.category}
-                      </span>
-                      <div className="flex items-center gap-1 font-mono text-[11px] text-[#0A0C10] bg-[#67df70] hover:bg-[#52c95b] px-2 py-1 rounded shadow-sm font-medium">
-                        <span>↵</span>
-                        <span>open</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Related Services Section */}
-              {relatedServices.length > 0 && (
-                <div className="pt-2">
-                  <div className="px-2 pt-1 pb-1 font-mono text-[10px] text-[#94A3B8] flex items-center justify-between select-none">
-                    <span className="tracking-wider">// RELATED SERVICES</span>
-                    <span>{relatedServices.length} OTHERS</span>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    {relatedServices.map((service, idx) => {
-                      const itemIndex = idx + 1;
-                      const isSelected = selectedIndex === itemIndex;
-                      const indexFormatted = String(itemIndex + 1).padStart(2, '0');
-
-                      return (
-                        <div
-                          key={service.id}
-                          onClick={() => {
-                            onLaunchService(service);
-                            onClose();
-                          }}
-                          className={`group flex items-center justify-between p-2 rounded-xl cursor-pointer transition-colors duration-100 ${
-                            isSelected
-                              ? 'bg-[#1D2026] text-white ring-1 ring-[#67df70]/40'
-                              : 'hover:bg-[#151921] text-[#CBD5E1]'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-lg bg-[#151921] border border-[#283141] flex items-center justify-center text-[#94A3B8] group-hover:text-[#67df70] shrink-0">
-                              <span className="material-symbols-outlined text-[18px]">
-                                {service.icon || 'circle'}
-                              </span>
-                            </div>
-                            <div className="min-w-0 flex flex-col">
-                              <span className="text-[13px] text-white font-medium tracking-tight truncate">
-                                {renderHighlightedText(service.name, query)}
-                              </span>
-                              <span className="text-[11px] text-[#94A3B8] truncate font-mono">
-                                {service.description} • {service.displayUrl}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0 pl-2">
-                            <span className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-[#0E1117] font-mono text-[10px] text-[#94A3B8] border border-[#1C212B]">
-                              // {service.category}
-                            </span>
-                            <span className="font-mono text-[10px] text-[#64748B] px-1">
-                              {indexFormatted}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <SectionHeading
+                label={commandMode ? '// COMMANDS' : '// SERVICES'}
+                detail={results.length > visible.length ? `TOP ${visible.length} OF ${results.length}` : undefined}
+              />
+              {commandMode
+                ? (visible as RankedItem<PaletteCommand>[]).map(renderCommand)
+                : (visible as RankedItem<ServiceItem>[]).map(renderService)}
             </>
           )}
         </div>
 
-        {/* Modal Keybinding Footer */}
         <div className="px-4 sm:px-6 py-2.5 bg-[#07090D]/80 border-t border-[#1C212B] flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-mono text-[11px] text-[#94A3B8]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#67df70]"></span>
-            <span>{totalMatches} matching services</span>
+            <span>
+              {results.length} {commandMode ? 'matching commands' : 'matching services'}
+            </span>
           </div>
-
-          <div className="flex items-center gap-3 font-mono text-[10px] text-[#64748B]">
-            <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]">
-                ↑
-              </kbd>
-              <kbd className="px-1 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]">
-                ↓
-              </kbd>
-              <span>navigate</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]">
-                ↵
-              </kbd>
-              <span>launch</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]">
-                tab
-              </kbd>
-              <span>copy url</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-[#191C22] border border-[#283141] text-[#CBD5E1]">
-                esc
-              </kbd>
-              <span>dismiss</span>
-            </span>
+          <div className="flex flex-wrap items-center justify-center gap-3 font-mono text-[10px] text-[#64748B]">
+            <Hint keys={['↑', '↓']} label="navigate" />
+            <Hint keys={['↵']} label={commandMode ? 'run' : 'launch'} />
+            {!commandMode && <Hint keys={['⇧', '↵']} label="copy url" />}
+            {!commandMode && categories.length > 1 && <Hint keys={['tab']} label="category" />}
+            <Hint keys={['esc']} label="dismiss" />
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };
