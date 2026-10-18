@@ -183,7 +183,8 @@ export const AutoDiscoveryModal: React.FC<AutoDiscoveryModalProps> = ({
 
   if (!isOpen) return null;
 
-  const overrideRoute = overrideRouteId ? discoveredRoutes.find((r) => r.id === overrideRouteId) : undefined;
+  // No route has a null id, so nothing matches while no route is being adjusted
+  const overrideRoute = discoveredRoutes.find((r) => r.id === overrideRouteId);
 
   const hidden = new Set(hiddenRouteIds);
   const hiddenCount = discoveredRoutes.filter((r) => hidden.has(r.id)).length;
