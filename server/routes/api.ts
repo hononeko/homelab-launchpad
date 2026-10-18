@@ -34,6 +34,7 @@ import {
 import { getPreferencesStore } from '../preferences/store';
 import { preferencesRouter } from './preferences';
 import { createMappingsRouter } from './mappings';
+import { workloadsRouter } from './workloads';
 
 export const apiRouter = Router();
 
@@ -189,6 +190,9 @@ apiRouter.use(
     await rescanRoutes(new Set(imported));
   })
 );
+
+// Sleep and wake for opted-in workloads
+apiRouter.use(workloadsRouter);
 
 // 4. Mark Route as Imported
 apiRouter.post('/routes/import', requireAdmin, (req: Request, res: Response) => {

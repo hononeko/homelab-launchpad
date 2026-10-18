@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ServiceItem,
   ServiceIdentity,
   RouteOverride,
+  ScalableWorkload,
+  WorkloadState,
   ArgoApplication,
   DiscoveredHTTPRoute,
   ExcludedRoute,
@@ -37,6 +39,8 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { HiddenServicesPanel } from './components/HiddenServicesPanel';
 import { EditServiceModal } from './components/EditServiceModal';
 import { usePreferencesSync } from './hooks/usePreferencesSync';
+import { useWorkloads, workloadKey } from './hooks/useWorkloads';
+import { WorkloadsPanel } from './components/WorkloadControls';
 
 // Stored and synced values are untrusted: each reader rebuilds the value from
 // known constants instead of passing parsed data through.
@@ -294,6 +298,20 @@ export default function App() {
     };
   }, [isAuthenticated, isAdmin]);
 
+  // Workloads administrators can put to sleep, linked to service cards by host
+  const { workloads, busy: workloadBusy, scale: scaleWorkload } = useWorkloads(isAuthenticated && isAdmin);
+  const workloadsByHost = useMemo(
+    () => new Map(workloads.flatMap((w) => (w.host ? [[w.host, w] as const] : []))),
+    [workloads]
+  );
+  const workloadFor = (service: ServiceItem): ScalableWorkload | undefined => {
+    try {
+      return workloadsByHost.get(new URL(service.url).hostname);
+    } catch {
+      return undefined;
+    }
+  };
+
   // Settings follow the signed-in user across devices; localStorage stays as the offline cache
   const syncedSettings = useMemo(
     () => ({ services, hiddenCategories, hiddenRouteIds, defaultTab, argoEnabled, autoSyncRoutes }),
@@ -434,8 +452,44 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
   return null;
 }
 
+  // Announce workloads that finish starting while the dashboard is open
+  const previousWorkloadStates = useRef(new Map<string, WorkloadState>());
+  useEffect(() => {
+    for (const workload of workloads) {
+      if (previousWorkloadStates.current.get(workloadKey(workload)) === 'starting' && workload.state === 'running') {
+        showToast(`${workload.name} is up and running`);
+      }
+    }
+    previousWorkloadStates.current = new Map(workloads.map((w) => [workloadKey(w), w.state]));
+  }, [workloads]);
+
+  const workloadProps = (service: ServiceItem) => {
+    const workload = workloadFor(service);
+    return workload
+      ? { workload, workloadBusy: workloadBusy.has(workloadKey(workload)), onToggleWorkload: handleToggleWorkload }
+      : {};
+  };
+
+  const handleToggleWorkload = async (workload: ScalableWorkload) => {
+    const stopping = workload.desiredReplicas > 0;
+    if (stopping && !window.confirm(`Stop ${workload.name}? Anyone using it will be disconnected.`)) return;
+    const result = await scaleWorkload(workload, stopping ? 0 : 1);
+    if (result.ok === false) {
+      showToast(`Could not ${stopping ? 'stop' : 'start'} ${workload.name}: ${result.error}`);
+      return;
+    }
+    showToast(stopping ? `Stopping ${workload.name}…` : `Starting ${workload.name}…`);
+  };
+
   // Launch service action
   const handleLaunchService = (service: ServiceItem) => {
+    // A sleeping service would only fail to load: offer to wake it instead
+    const sleeping = workloadFor(service);
+    if (sleeping?.desiredReplicas === 0) {
+      if (window.confirm(`${service.name} is asleep. Start it now?`)) void handleToggleWorkload(sleeping);
+      return;
+    }
+
     const safeUrl = getSafeLaunchUrl(service.url);
     if (!safeUrl) {
       showToast(`Invalid launch URL for ${service.name}`);
@@ -919,6 +973,8 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                 />
               )}
 
+              {isAdmin && <WorkloadsPanel workloads={workloads} busy={workloadBusy} onToggle={handleToggleWorkload} />}
+
               {/* 3. Filter Tabs and Sorting Bar */}
               <div className="flex items-center justify-between pt-2 pb-1 border-b border-[#1C212B]/70">
                 <div className="flex items-center gap-1.5 p-1 bg-[#0A0C10] rounded-lg border border-[#1C212B]">
@@ -1056,6 +1112,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                         onLaunch={handleLaunchService}
                         onHide={(id) => handleSetServiceHidden(id, true)}
                         onEdit={setEditingServiceId}
+                        {...workloadProps(service)}
                       />
                     );
                   })}
@@ -1264,6 +1321,7 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
                               onLaunch={handleLaunchService}
                               onHide={(id) => handleSetServiceHidden(id, true)}
                               onEdit={setEditingServiceId}
+                              {...workloadProps(service)}
                             />
                           ))}
                         </div>

@@ -99,6 +99,39 @@ describe('ServiceCard', () => {
     expect(onLaunch).not.toHaveBeenCalled();
   });
 
+  test('a linked workload adds a power control and explains a sleeping service', () => {
+    const onToggleWorkload = mock();
+    const workload = {
+      kind: 'Deployment' as const,
+      namespace: 'media',
+      name: 'jellyfin',
+      desiredReplicas: 0,
+      readyReplicas: 0,
+      state: 'stopped' as const,
+      host: 'jellyfin.example.com',
+    };
+    const { onLaunch } = renderCard({ workload, onToggleWorkload });
+    expect(screen.getByText('Sleeping')).toBeDefined();
+    expect(screen.queryByText('Active • 2h ago')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Start jellyfin'));
+    expect(onToggleWorkload).toHaveBeenCalledWith(workload);
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  test('a running workload keeps the usual health status', () => {
+    const workload = {
+      kind: 'Deployment' as const,
+      namespace: 'media',
+      name: 'jellyfin',
+      desiredReplicas: 1,
+      readyReplicas: 1,
+      state: 'running' as const,
+    };
+    renderCard({ workload, onToggleWorkload: mock() });
+    expect(screen.getByText('Active • 2h ago')).toBeDefined();
+    expect(screen.getByLabelText('Stop jellyfin')).toBeDefined();
+  });
+
   test('has no edit button without a handler', () => {
     renderCard();
     expect(screen.queryByTitle('Edit name and icon')).toBeNull();

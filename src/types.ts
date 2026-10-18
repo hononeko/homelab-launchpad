@@ -202,3 +202,20 @@ export interface CategoryMappings {
   namespaceRules: Record<string, CategoryIcon>;
   overrides: Record<string, RouteOverride>;
 }
+
+export type WorkloadKind = 'Deployment' | 'StatefulSet';
+
+// "starting" and "stopping" while the ready replicas catch up with the desired count
+export type WorkloadState = 'running' | 'stopped' | 'starting' | 'stopping';
+
+/** A Deployment or StatefulSet that administrators can put to sleep (0 replicas) or wake (1). */
+export interface ScalableWorkload {
+  kind: WorkloadKind;
+  namespace: string;
+  name: string;
+  desiredReplicas: number;
+  readyReplicas: number;
+  state: WorkloadState;
+  // Host of the service it backs (from its annotation), linking it to that service's card
+  host?: string;
+}

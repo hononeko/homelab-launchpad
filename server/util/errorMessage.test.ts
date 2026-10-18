@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { errorMessage } from './errorMessage';
+import { errorMessage, singleLine } from './errorMessage';
 
 describe('errorMessage', () => {
   test('uses Error messages and strings, stripping line breaks', () => {
@@ -10,5 +10,11 @@ describe('errorMessage', () => {
   test('does not stringify arbitrary objects', () => {
     expect(errorMessage({ secret: 'value' })).toBe('unknown error');
     expect(errorMessage(undefined)).toBe('unknown error');
+  });
+});
+
+describe('singleLine', () => {
+  test('removes line breaks from text', () => {
+    expect(singleLine('jdoe\r\n[Workloads] forged')).toBe('jdoe[Workloads] forged');
   });
 });

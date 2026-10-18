@@ -323,6 +323,82 @@ describe('App administrator flows', () => {
     expect(await screen.findByText('Homelab Launchpad Configuration')).toBeDefined();
   });
 
+  test('administrators start and stop workloads, and launching a sleeping service offers to wake it', async () => {
+    const sleeping = {
+      kind: 'StatefulSet',
+      namespace: 'games',
+      name: 'satisfactory',
+      desiredReplicas: 0,
+      readyReplicas: 0,
+      state: 'stopped',
+    };
+    const jellyfin = {
+      kind: 'Deployment',
+      namespace: 'media',
+      name: 'jellyfin',
+      desiredReplicas: 0,
+      readyReplicas: 0,
+      state: 'stopped',
+      host: 'jellyfin.example.com',
+    };
+    const confirm = mock(() => true);
+    window.confirm = confirm as unknown as typeof window.confirm;
+    const open = mock();
+    window.open = open as unknown as typeof window.open;
+    await renderAsAdmin({
+      '/api/workloads': { body: { success: true, workloads: [sleeping, jellyfin] } },
+      '/api/workloads/games/statefulset/satisfactory/scale': {
+        body: { success: true, workload: { ...sleeping, desiredReplicas: 1, state: 'starting' } },
+      },
+      '/api/workloads/media/deployment/jellyfin/scale': {
+        body: { success: true, workload: { ...jellyfin, desiredReplicas: 1, state: 'starting' } },
+      },
+    });
+
+    fireEvent.click(await screen.findByLabelText('Start satisfactory'));
+    expect(await screen.findByText('Starting satisfactory…')).toBeDefined();
+    const post = requests.find((r) => r.url === '/api/workloads/games/statefulset/satisfactory/scale')!;
+    expect(JSON.parse(String(post.init!.body))).toEqual({ replicas: 1 });
+    // Starting needs no confirmation
+    expect(confirm).not.toHaveBeenCalled();
+
+    // Jellyfin's card is linked through the workload's host
+    fireEvent.click(screen.getByText('Media streaming server'));
+    expect(confirm).toHaveBeenCalledWith('Jellyfin is asleep. Start it now?');
+    expect(await screen.findByText('Starting jellyfin…')).toBeDefined();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  test('a workload that finishes starting is announced', async () => {
+    const running = { kind: 'StatefulSet', namespace: 'games', name: 'satisfactory', desiredReplicas: 1, readyReplicas: 1, state: 'running' };
+    window.confirm = mock(() => true) as unknown as typeof window.confirm;
+    await renderAsAdmin({
+      // The list always reports it running; the scale answer says it is starting
+      '/api/workloads': { body: { success: true, workloads: [running] } },
+      '/api/workloads/games/statefulset/satisfactory/scale': {
+        body: { success: true, workload: { ...running, readyReplicas: 0, state: 'starting' } },
+      },
+    });
+    fireEvent.click(await screen.findByLabelText('Stop satisfactory'));
+    expect(await screen.findByText('satisfactory is up and running')).toBeDefined();
+  });
+
+  test('stopping a workload asks first and reports failures', async () => {
+    const running = { kind: 'Deployment', namespace: 'games', name: 'builder', desiredReplicas: 1, readyReplicas: 1, state: 'running' };
+    window.confirm = mock(() => false) as unknown as typeof window.confirm;
+    await renderAsAdmin({
+      '/api/workloads': { body: { success: true, workloads: [running] } },
+      '/api/workloads/games/deployment/builder/scale': { status: 502, body: { success: false, error: 'The cluster rejected the request' } },
+    });
+
+    fireEvent.click(await screen.findByLabelText('Stop builder'));
+    expect(requests.some((r) => r.url.endsWith('/builder/scale'))).toBe(false);
+
+    window.confirm = mock(() => true) as unknown as typeof window.confirm;
+    fireEvent.click(screen.getByLabelText('Stop builder'));
+    expect(await screen.findByText('Could not stop builder: The cluster rejected the request')).toBeDefined();
+  });
+
   test('the cluster modal shows node telemetry', async () => {
     await renderAsAdmin();
     fireEvent.click(screen.getByTitle('View Cluster Nodes & Pod Telemetry'));
@@ -352,6 +428,14 @@ describe('App navigation', () => {
 
     fireEvent.keyDown(window, { key: '/' });
     expect(await screen.findByPlaceholderText('Search services, or type > for commands')).toBeDefined();
+  });
+
+  test('viewers never load workloads', async () => {
+    installApi(session('viewer'));
+    render(<App />);
+    await screen.findByText('Mealie');
+    await waitFor(() => expect(requested('/api/auth/me')).toBe(true));
+    expect(requested('/api/workloads')).toBe(false);
   });
 
   test('viewers only get navigation commands', async () => {
