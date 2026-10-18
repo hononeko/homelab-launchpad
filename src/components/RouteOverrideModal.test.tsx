@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { RouteOverrideModal } from './RouteOverrideModal';
 import { makeRoute } from '../test/fixtures';
 import type { DiscoveredHTTPRoute } from '../types';
@@ -20,9 +20,10 @@ describe('RouteOverrideModal', () => {
     fireEvent.change(screen.getByLabelText('NAME'), { target: { value: ' Movies ' } });
     fireEvent.change(screen.getByLabelText('CATEGORY'), { target: { value: 'HOME & LIVING' } });
     fireEvent.click(screen.getByLabelText('live_tv'));
-    fireEvent.click(screen.getByText('Save'));
-
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'));
+    });
+    expect(onClose).toHaveBeenCalled();
     expect(onSave).toHaveBeenCalledWith('jellyfin.example.com', {
       name: 'Movies',
       category: 'HOME & LIVING',
@@ -32,16 +33,20 @@ describe('RouteOverrideModal', () => {
 
   test('stays open when saving fails', async () => {
     const { onSave, onClose } = renderModal(makeRoute(), false);
-    fireEvent.click(screen.getByText('Save'));
-    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'));
+    });
+    expect(onSave).toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(false);
   });
 
   test('offers removing an existing override', async () => {
     const { onSave } = renderModal(makeRoute({ override: { icon: 'live_tv' } }));
-    fireEvent.click(screen.getByText('Remove override'));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith('jellyfin.example.com', null));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Remove override'));
+    });
+    expect(onSave).toHaveBeenCalledWith('jellyfin.example.com', null);
   });
 
   test('has no remove button without an override, and a blank name cannot be saved', () => {

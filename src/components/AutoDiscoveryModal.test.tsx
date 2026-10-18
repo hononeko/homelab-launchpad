@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { ComponentProps } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { AutoDiscoveryModal } from './AutoDiscoveryModal';
 import { makeRoute } from '../test/fixtures';
 
@@ -173,8 +173,11 @@ describe('AutoDiscoveryModal', () => {
 
     fireEvent.click(screen.getByLabelText('Adjust mealie.example.com'));
     expect(screen.getByText('Route defaults')).toBeDefined();
-    fireEvent.click(screen.getByText('Save'));
-    await waitFor(() => expect(screen.queryByText('Route defaults')).toBeNull());
+    // The save resolves asynchronously; act flushes the dialog closing afterwards
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'));
+    });
+    expect(screen.queryByText('Route defaults')).toBeNull();
     expect(onSaveRouteOverride).toHaveBeenCalledWith('mealie.example.com', {
       name: 'Mealie',
       category: 'MEDIA',
