@@ -248,14 +248,16 @@ Endpoints: `GET /api/services/health`, `POST /api/services/health/targets` (`{ "
 
 ## CI/CD & Releases
 
-Same model as the other container repositories, built on the shared actions in [hononeko/actions](https://github.com/hononeko/actions): `bun-setup`, `version`, `release-notes` and `smoke-test`.
+Same model as the other container repositories, built on the shared actions in [hononeko/actions](https://github.com/hononeko/actions): `bun-setup`, `version`, `release-notes`, `smoke-test`, `publish-image` and `prune-snapshots`.
 
 | Workflow | When | What |
 |---|---|---|
-| `pr.yml` | Pull requests | **validate** (lint, tests with coverage against a Valkey service, build, smoke test), **sonar**, and **image** (amd64 + arm64 built natively, smoke-tested, not pushed) |
+| `pr.yml` | Pull requests | **validate** (lint, tests with coverage against a Valkey service, build, smoke test), **sonar**, and **image** (amd64 + arm64 built natively, smoke-tested). With the `snapshot` label, on a branch of this repository, the head commit is also published as a snapshot, `pr-<PR>-sha-<commit>` and `pr-<PR>`, named in a PR comment |
+| `snapshot-cleanup.yml` | Pull request closed | Deletes that pull request's snapshot images |
 | `main.yml` | Push to `main` | The same, then publishes a multi-arch **release candidate** to `ghcr.io/hononeko/homelab-launchpad` as `X.Y.Z-rc.N`, `sha-<commit>` and `edge`, with build-provenance attestation |
 | `cd.yml` | Manual (`workflow_dispatch`) | Promotes this commit's release candidate (same digest, no rebuild) to `X.Y.Z` and `latest`, creates the GitHub Release with grouped notes, and prunes that version's candidate tags. `dry_run` shows all of this without changing anything; only `main` publishes. |
 
+- **Snapshots** are for testing in the cluster before merging, never for the gitops repository.
 - **Versions** come from [Conventional Commits](https://www.conventionalcommits.org/): `feat` gives a minor bump, `!` or `BREAKING CHANGE:` a major one, and `docs`/`test` nothing.
 - **Pinning:** Bun is pinned in `.bun-version` (CI) and in the Dockerfile's `oven/bun:<version>-alpine`. Renovate updates both together with `@types/bun`.
 
