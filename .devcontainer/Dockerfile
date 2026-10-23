@@ -1,6 +1,6 @@
 # Isolated development image: all dependency installs, builds, and repo scripts
 # run here rather than on the host.
-FROM oven/bun:1.4.3-debian
+FROM oven/bun:1.4.4-debian
 
 # Pre-create the node_modules mount point owned by the unprivileged `bun` user
 # so the named volume inherits that ownership on first mount (the container runs
