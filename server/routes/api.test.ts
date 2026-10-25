@@ -2,9 +2,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { apiRouter, broadcastTelemetry } from './api';
+import { apiRouter, broadcastServiceHealth, broadcastTelemetry } from './api';
 import { parseProbeTarget, resetHealthProbeState, runProbeRound } from '../health/probe';
 import { resetK8sClient } from '../k8s/client';
+import { startFakeCluster } from '../test/fakeKubeApi';
 import { INITIAL_NODES, INITIAL_TELEMETRY } from '../../src/data/initialData';
 
 let server: Server;
@@ -200,6 +201,20 @@ describe('administrator actions (simulation mode)', () => {
     expect(syncAll.count).toBe(expected.length);
   });
 
+  test('sync returns 500 when the cluster rejects the patch', async () => {
+    const cluster = await startFakeCluster();
+    try {
+      const res = await call('/argo/applications/jellyfin/sync', ADMIN, { method: 'POST' });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        success: false,
+        error: 'Failed to trigger sync for jellyfin',
+      });
+    } finally {
+      await cluster.close();
+    }
+  });
+
   test('sync rejects names that are not valid Kubernetes resource names', async () => {
     const res = await call('/argo/applications/Bad_Name/sync', ADMIN, { method: 'POST' });
     expect(res.status).toBe(400);
@@ -328,6 +343,19 @@ describe('SSE stream', () => {
     } finally {
       admin.close();
       viewer.close();
+    }
+  });
+
+  test('sends initial and broadcast service health updates to connected streams', async () => {
+    await runProbeRound();
+    const stream = await openStream(ALICE);
+    try {
+      expect(await stream.readUntil((t) => t.includes('event: health:updated'))).toContain('health:updated');
+
+      broadcastServiceHealth();
+      expect(await stream.readUntil((t) => t.split('event: health:updated').length >= 3)).toContain('health:updated');
+    } finally {
+      stream.close();
     }
   });
 });
