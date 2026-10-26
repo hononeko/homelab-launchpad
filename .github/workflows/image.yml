@@ -58,7 +58,7 @@ jobs:
       # health endpoint answers. AUTH_TRUSTED_PROXIES="*" only silences the production fail-closed warning.
       # It used about 29 MiB after startup on both architectures (Bun 1.4.3); the limit leaves headroom.
       - name: Smoke test
-        uses: hononeko/actions/smoke-test@0367cfc2a81e0f079c9ca2729d2969518d8732b9 # v1.4.1
+        uses: hononeko/actions/smoke-test@5532ca1e4b7254aed1f85fe64b6230941d6eed21 # v1.4.2
         with:
           image: smoke:${{ matrix.arch }}
           port: "3000"
