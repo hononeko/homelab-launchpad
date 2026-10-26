@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Bun and dependencies
-        uses: hononeko/actions/bun-setup@0367cfc2a81e0f079c9ca2729d2969518d8732b9 # v1.4.1
+        uses: hononeko/actions/bun-setup@5532ca1e4b7254aed1f85fe64b6230941d6eed21 # v1.4.2
 
       - name: TypeScript typecheck
         run: bun run lint
