@@ -3,15 +3,11 @@ import { ClusterTelemetry } from '../types';
 
 interface TelemetryStripProps {
   telemetry: ClusterTelemetry;
-  totalServices: number;
-  onOpenSearch: () => void;
   onOpenClusterModal: () => void;
 }
 
 export const TelemetryStrip: React.FC<TelemetryStripProps> = ({
   telemetry,
-  totalServices,
-  onOpenSearch,
   onOpenClusterModal,
 }) => {
   return (

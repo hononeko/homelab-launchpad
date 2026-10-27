@@ -5,5 +5,5 @@ coverageReporter = ["text", "lcov"]
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = ["server/test/**", "src/test/**"]
 # Bun enforces these per file, so they are floors just below today's weakest
-# files (route error branches, small inline handlers). Sonar gates new code.
+# files (route error branches, small inline handlers). CI's coverage step gates changed lines.
 coverageThreshold = { lines = 0.8, functions = 0.6 }

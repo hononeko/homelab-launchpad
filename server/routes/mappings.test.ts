@@ -51,7 +51,7 @@ function call(path: string, method = 'GET', body?: unknown) {
   return fetch(`${baseUrl}${path}`, {
     method,
     headers: { ...ADMIN, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
 

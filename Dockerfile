@@ -38,7 +38,9 @@ COPY --from=builder --chown=launchpad:launchpad /app/dist-server ./dist-server
 # Expose service port
 EXPOSE 3000
 
-# Container healthcheck against backend health endpoint
+# Container healthcheck against backend health endpoint. A shell, so any wget failure exits 1: Docker reserves other
+# exit codes.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health || exit 1
 
