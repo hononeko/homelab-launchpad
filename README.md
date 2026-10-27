@@ -104,7 +104,7 @@ Tests use Bun's built-in runner (`bun test`) in two separate runs, so the browse
 | `test:unit` | Both of the above |
 | `test:coverage` | Both, with LCOV reports in `coverage/{server,client}/lcov.info` and the per-file floors from `bunfig.toml` |
 
-CI runs `test:coverage`, and the Sonar job uploads both reports to SonarCloud.
+CI runs `test:coverage` and reports both with `hononeko/actions/coverage`: overall, and a pull request's changed lines, which must be 80% covered.
 
 ### Authentication & Access Control (Authelia)
 
@@ -252,7 +252,7 @@ Same model as the other container repositories, built on the shared actions in [
 
 | Workflow | When | What |
 |---|---|---|
-| `pr.yml` | Pull requests | **validate** (lint, tests with coverage against a Valkey service, build, smoke test), **sonar**, and **image** (amd64 + arm64 built natively, smoke-tested). With the `snapshot` label, on a branch of this repository, the head commit is also published as a snapshot, `pr-<PR>-sha-<commit>` and `pr-<PR>`, named in a PR comment |
+| `pr.yml` | Pull requests | **validate** (lint, tests with coverage against a Valkey service, build, smoke test) and **image** (amd64 + arm64 built natively, smoke-tested). With the `snapshot` label, on a branch of this repository, the head commit is also published as a snapshot, `pr-<PR>-sha-<commit>` and `pr-<PR>`, named in a PR comment |
 | `snapshot-cleanup.yml` | Pull request closed | Deletes that pull request's snapshot images |
 | `main.yml` | Push to `main` | The same, then publishes a multi-arch **release candidate** to `ghcr.io/hononeko/homelab-launchpad` as `X.Y.Z-rc.N`, `sha-<commit>` and `edge`, with build-provenance attestation |
 | `cd.yml` | Manual (`workflow_dispatch`) | Promotes this commit's release candidate (same digest, no rebuild) to `X.Y.Z` and `latest`, creates the GitHub Release with grouped notes, and prunes that version's candidate tags. `dry_run` shows all of this without changing anything; only `main` publishes. |

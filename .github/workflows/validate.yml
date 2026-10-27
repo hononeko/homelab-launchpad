@@ -1,7 +1,7 @@
 name: Validate
 
-# Lint, tests with coverage (incl. the Valkey store contract), production build and smoke test. Shared by pr.yml and
-# main.yml. Uploads the coverage reports for the Sonar job.
+# Lint (workflows, Dockerfiles, oxlint, types), tests with coverage (incl. the Valkey store contract), production build
+# and smoke test. Shared by pr.yml and main.yml.
 on:
   workflow_call:
 
@@ -25,9 +25,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Bun and dependencies
-        uses: hononeko/actions/bun-setup@e1fdec215f80fc9a1574c61b15303f6789d09b7c # v1.4.7
+        uses: hononeko/actions/bun-setup@v1
+
+      - name: Lint workflows and actions
+        uses: hononeko/actions/lint-actions@v1
+
+      - name: Lint Dockerfiles
+        uses: hononeko/actions/lint-docker@v1
+
+      - name: Lint JS/TS
+        uses: hononeko/actions/lint-js@v1
 
       - name: TypeScript typecheck
         run: bun run lint
@@ -37,16 +48,16 @@ jobs:
         env:
           VALKEY_TEST_URL: redis://localhost:6379
 
+      # Overall coverage is reported; a pull request's changed lines must be 80% covered. bunfig.toml keeps per-file
+      # floors on top.
+      - name: Coverage
+        uses: hononeko/actions/coverage@v1
+        with:
+          files: coverage/server/lcov.info coverage/client/lcov.info
+          min-changed-coverage: "80"
+
       - name: Build frontend and server
         run: bun run build
 
       - name: Production server smoke test
         run: bun run test:smoke
-
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: coverage
-          path: coverage/*/lcov.info
-          if-no-files-found: error
-          retention-days: 1

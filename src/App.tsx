@@ -967,8 +967,6 @@ function getSafeLaunchUrl(rawUrl: string): string | null {
               {isAdmin && (
                 <TelemetryStrip
                   telemetry={telemetry}
-                  totalServices={visibleServices.length}
-                  onOpenSearch={() => setIsSearchOpen(true)}
                   onOpenClusterModal={() => setIsClusterModalOpen(true)}
                 />
               )}
